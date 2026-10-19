@@ -68,6 +68,8 @@
   <button id="btnRec" class="on">기록 중</button>
   <button id="btnFix" class="on">정지 보정</button>
   <button id="btnFollow">따라가기</button>
+  <button id="btnGrav">⬇ 중력 정렬</button>
+  <button id="btnLevel" class="on">수평 유지</button>
 </div>
 
 <div id="start">
@@ -192,10 +194,25 @@ const camT = new THREE.PerspectiveCamera(50, 1, 0.005, 200);
 camT.position.set(1.3, 1.1, 1.8);
 const controls = new OrbitControls(camT, canvas);
 controls.enableDamping = true; controls.dampingFactor = 0.12; controls.target.set(0, 0, 0);
-controls.minDistance = 0.15; controls.maxDistance = 40;
+controls.minDistance = 0.15; controls.maxDistance = 300;
 controls.enabled = false;
 
 const plot = new THREE.Group(); sceneT.add(plot);       // 좌표축·눈금 (크기 자동 조절)
+// 추: 실 + 원뿔 추. 움직일 때 가속도 반대 방향으로 흔들림
+const plumb = (() => {
+  const g = new THREE.Group(); sceneT.add(g);
+  const strGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+  const str = new THREE.Line(strGeo, new THREE.LineBasicMaterial({ color: 0xfbbf24 })); str.frustumCulled = false; g.add(str);
+  const bob = new THREE.Group();
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.13, 24),
+    new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.6, roughness: 0.3 }));
+  cone.rotation.x = Math.PI; cone.position.y = -0.065; bob.add(cone);
+  const cap = new THREE.Mesh(new THREE.SphereGeometry(0.045, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.6, roughness: 0.3 })); bob.add(cap);
+  g.add(bob);
+  const label = sprite('중력 ▼', '#fbbf24', 0.08, 60); g.add(label);
+  return { g, str, strGeo, bob, label, anchor: new THREE.Vector3(), len: 1, dir: new THREE.Vector3(0, -1, 0) };
+})();
 let plotSize = 0;
 function buildPlot(L) {          // L = 축 반길이(m)
   if (L === plotSize) return; plotSize = L;
@@ -203,11 +220,23 @@ function buildPlot(L) {          // L = 축 반길이(m)
   const step = L <= 1 ? 0.1 : L <= 3 ? 0.25 : L <= 6 ? 0.5 : 1;
   const major = step * (L <= 1 ? 5 : 4);
   const div = Math.round((2 * L) / step);
-  const fine = new THREE.GridHelper(2 * L, div, 0x1c2230, 0x1c2230); plot.add(fine);
-  const coarse = new THREE.GridHelper(2 * L, Math.round((2 * L) / major), 0x2f3a4f, 0x2f3a4f); coarse.position.y = 0.0005; plot.add(coarse);
-  // 세로 기준면 (XY, 원점)
-  const wall = new THREE.GridHelper(2 * L, Math.round((2 * L) / major), 0x1a2030, 0x1a2030);
-  wall.rotation.x = Math.PI / 2; wall.material.transparent = true; wall.material.opacity = 0.5; plot.add(wall);
+  // 그래프 상자: 바닥(채움+격자)은 상자 맨 아래, 원점은 상자 가운데
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(2 * L, 2 * L),
+    new THREE.MeshBasicMaterial({ color: 0x1b2333, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }));
+  floor.rotation.x = -Math.PI / 2; floor.position.y = -L - 0.002; plot.add(floor);
+  const fine = new THREE.GridHelper(2 * L, div, 0x2a3446, 0x2a3446); fine.position.y = -L; plot.add(fine);
+  const coarse = new THREE.GridHelper(2 * L, Math.round((2 * L) / major), 0x46536b, 0x46536b); coarse.position.y = -L + 0.001; plot.add(coarse);
+  const box = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(2 * L, 2 * L, 2 * L)),
+    new THREE.LineBasicMaterial({ color: 0x334155 }));
+  plot.add(box);
+  // 천장 표시 (윗면 테두리를 옅게 강조)
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(2 * L, 2 * L),
+    new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.04, side: THREE.DoubleSide, depthWrite: false }));
+  ceil.rotation.x = -Math.PI / 2; ceil.position.y = L; plot.add(ceil);
+  const floorLab = sprite('바닥', '#94a3b8', L * 0.08, 60); floorLab.position.set(L * 0.8, -L + L * 0.05, L * 0.8); plot.add(floorLab);
+  // 추 (상자 뒤-왼쪽 윗모서리에 매달림)
+  plumb.anchor.set(-L, L, -L); plumb.len = 1.45 * L;
+  plumb.bob.scale.setScalar(L); plumb.label.scale.set(L * 0.16, L * 0.08, 1);
   const axis = (dir, color, name) => {
     const v = new THREE.Vector3(...dir);
     const g = new THREE.BufferGeometry().setFromPoints([v.clone().multiplyScalar(-L), v.clone().multiplyScalar(L)]);
@@ -224,7 +253,8 @@ function buildPlot(L) {          // L = 축 반길이(m)
     }
   };
   axis([1, 0, 0], 0xef4444, 'X 오른쪽');
-  axis([0, 1, 0], 0x22c55e, 'Y 위');
+  axis([0, 1, 0], 0x22c55e, '▲ 위');
+  const down = sprite('▼ 아래', '#22c55e', L * 0.09, 70); down.position.set(0, -L * 1.12, 0); plot.add(down);
   axis([0, 0, -1], 0x3b82f6, '앞');
   const unit = sprite('단위: m', '#64748b', L * 0.05, 48); unit.position.set(-L, 0, L); plot.add(unit);
 }
@@ -296,12 +326,12 @@ function navReset() {
   nPts = 0; trailGeo.instanceCount = 0; shadowGeo.setDrawRange(0, 0); lastPt.set(0, 0, 0);
   addPoint(0);
   if (last) { alphaOffset = last.a; onOrientation({ alpha: last.a, beta: last.b, gamma: last.g }); }
-  buildPlot(1); controls.target.set(0, 0.25, 0); camT.position.set(1.9, 1.5, 2.7);
+  buildPlot(1); gravityView();
 }
 function addPoint(speed) {
   if (nPts >= MAXP) return;
   const i = nPts * 3, p = nav.pos;
-  shadowPos[i] = p.x; shadowPos[i + 1] = 0.001; shadowPos[i + 2] = p.z;
+  shadowPos[i] = p.x; shadowPos[i + 1] = 0; shadowPos[i + 2] = p.z;
   const c = new THREE.Color().setHSL(0.6 - Math.min(speed / 1.5, 1) * 0.6, 0.9, 0.58);
   if (nPts > 0) {
     const s = (nPts - 1) * 6;
@@ -419,6 +449,16 @@ $('btnRec').addEventListener('click', (e) => {
 $('btnFix').addEventListener('click', (e) => { nav.fix = !nav.fix; e.currentTarget.classList.toggle('on', nav.fix); });
 let follow = false;
 $('btnFollow').addEventListener('click', (e) => { follow = !follow; e.currentTarget.classList.toggle('on', follow); });
+let level = true;
+$('btnLevel').addEventListener('click', (e) => { level = !level; e.currentTarget.classList.toggle('on', level); });
+// 중력 정렬: 위가 위로, 바닥이 아래로 보이는 기본 시점으로 되돌림
+function gravityView() {
+  const c = follow ? nav.pos : new THREE.Vector3();
+  controls.target.copy(c);
+  camT.position.copy(c).add(new THREE.Vector3(0.62, 0.5, 0.9).multiplyScalar(plotSize * 4.2));
+  camT.up.set(0, 1, 0); controls.update();
+}
+$('btnGrav').addEventListener('click', gravityView);
 
 function resize() {
   const w = innerWidth, h = innerHeight;
@@ -430,7 +470,8 @@ function resize() {
 addEventListener('resize', resize); resize();
 
 // ---------- 루프 ----------
-const tmp = new THREE.Vector3(), prevTarget = new THREE.Vector3();
+const tmp = new THREE.Vector3(), prevTarget = new THREE.Vector3(), gDev = new THREE.Vector3(), qInv = new THREE.Quaternion();
+let rollSm = 0;
 const fmt = (v, d = 1) => (v >= 0 ? '+' : '') + v.toFixed(d);
 let hudT = 0;
 function frame(t) {
@@ -463,7 +504,16 @@ function frame(t) {
   phoneT.quaternion.slerp(qTarget, 0.5);
   phoneT.position.copy(nav.pos);
   const dp = dropGeo.attributes.position;
-  dp.setXYZ(0, nav.pos.x, nav.pos.y, nav.pos.z); dp.setXYZ(1, nav.pos.x, 0, nav.pos.z); dp.needsUpdate = true;
+  dp.setXYZ(0, nav.pos.x, nav.pos.y, nav.pos.z); dp.setXYZ(1, nav.pos.x, -plotSize, nav.pos.z); dp.needsUpdate = true;
+  shadow.position.y = -plotSize + 0.002;
+  // 추: 겉보기 중력(g − a) 방향으로 매달림
+  tmp.set(-nav.aW.x * 0.6, -9.81 - nav.aW.y * 0.6, -nav.aW.z * 0.6).normalize();
+  plumb.dir.lerp(tmp, 0.12).normalize();
+  const end = plumb.dir.clone().multiplyScalar(plumb.len).add(plumb.anchor);
+  plumb.strGeo.attributes.position.setXYZ(0, plumb.anchor.x, plumb.anchor.y, plumb.anchor.z);
+  plumb.strGeo.attributes.position.setXYZ(1, end.x, end.y, end.z); plumb.strGeo.attributes.position.needsUpdate = true;
+  plumb.bob.position.copy(end); plumb.bob.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), plumb.dir);
+  plumb.label.position.copy(end).add(new THREE.Vector3(plotSize * 0.17, -plotSize * 0.06, 0));
   drop.computeLineDistances();
   // 축 범위 자동 확대
   const need = [1, 2, 3, 5, 8, 12, 20].find(L => nav.maxDisp < L * 0.85) || 20;
@@ -474,6 +524,16 @@ function frame(t) {
     camT.position.add(tmp.copy(controls.target).sub(prevTarget));
   }
   controls.update();
+  // 수평 유지: 폰을 옆으로 기울여도 그래프의 '아래'가 실제 중력 방향을 향하도록 화면을 반대로 돌림
+  if (level && gotOrientation) {
+    gDev.set(0, -1, 0).applyQuaternion(qInv.copy(qTarget).invert());
+    if (Math.hypot(gDev.x, gDev.y) > 0.3) {          // 폰을 거의 눕혔을 때는 직전 값 유지
+      const phi = Math.atan2(gDev.x, -gDev.y);
+      let d = phi - rollSm; d = Math.atan2(Math.sin(d), Math.cos(d));
+      rollSm += d * 0.25;
+    }
+    camT.rotateZ(-rollSm);
+  }
   if (t - hudT > 100) {
     hudT = t;
     const spd = nav.vel.length();
