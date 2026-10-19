@@ -41,6 +41,32 @@ flowchart LR
   E --> F[궤적 선]
 ```
 
+### 🚗 차량 모드
+
+| 처리 | 내용 |
+|------|------|
+| 저역 통과(5Hz) | 노면·엔진 진동 제거 |
+| 진동 수준 학습 | 최근 6초 흔들림 하위 20%를 평소 진동으로 보고, 그 2.5배 이하이면 정지로 판정 |
+| 기준선 학습 | 정지 중의 가속도(센서 치우침 + 차량 자체 가감속)를 기준선으로 빼줌 |
+| 구간 사후 보정 | 손동작이 끝나 정지가 확인되면 남은 속도를 구간 오차로 보고 경로를 다시 계산해 다시 그림 |
+
+### 🛰 GPS·나침반 융합
+
+- 축마다 위치·속도·가속도 치우침 3개 상태의 칼만 필터: 60Hz 가속도로 예측, 약 1Hz GPS 위치(정확도 반영)·속도·진행 방향으로 보정
+- 차가 멈춘 것을 GPS 속도로 확인했을 때만 정지 보정 (정속 주행 중 진동이 적어도 속도를 0으로 만들지 않음)
+- 나침반(`webkitCompassHeading`)으로 세로축 방위를 계속 맞춰 자이로 방위 드리프트 제거, 월드 좌표 = 동/위/북. 한국 부근은 자북 편차 −8.8° 보정
+- GPS 위치에는 수 m 오차가 있어 cm 단위 손동작이 아니라 차량·보행 경로용
+
+### 🧪 시험 도구
+
+| 명령 | 내용 |
+|------|------|
+| `node tools/sim.mjs` | 합성 진동·차량 가감속·손동작으로 일반/차량 모드 오차 비교 |
+| `node tools/sim_gps.mjs` | 합성 주행(가속·커브·정지)에서 GPS만 쓸 때와 융합 오차 비교 |
+| `node tools/replay.mjs logs/<파일> vehicle` | 아이폰 "센서 녹화"로 올린 실제 로그를 알고리즘에 다시 넣어보기 |
+
+센서 녹화: 궤적 모드 `⋯` → `● 센서 녹화` → 다시 누르면 서버(`/api/log`, `imu-logger` 컨테이너)로 전송되어 `logs/`에 저장.
+
 > [!WARNING]
 > 가속도를 두 번 적분하면 오차가 시간의 제곱으로 커집니다. 수 초 이내 손동작(원·글씨·들어 올리기)은 잘 나오지만, 걸어다니는 수십 초 경로는 정지 보정을 켜도 점점 틀어집니다. 움직임 사이사이 잠깐 멈추면 정확도가 올라갑니다.
 
@@ -66,9 +92,7 @@ flowchart LR
 <details><summary>컨테이너 실행</summary>
 
 ```bash
-docker run -d --name imu-viewer --network npm_network --restart unless-stopped \
-  -v $PWD/public:/usr/share/nginx/html:ro \
-  -v $PWD/nginx.conf:/etc/nginx/conf.d/default.conf:ro nginx:alpine
+docker compose up -d   # imu-viewer(nginx 정적) + imu-logger(센서 로그 수신)
 ```
 
 NPM 프록시 호스트: `imu.b-612.kr` → `imu-viewer:80` (인증서 `*.b-612.kr`)

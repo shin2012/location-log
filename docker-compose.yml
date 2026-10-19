@@ -1,0 +1,25 @@
+services:
+  web:
+    image: nginx:alpine
+    container_name: imu-viewer
+    restart: unless-stopped
+    volumes:
+      - ./public:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks: [npm_network]
+    depends_on: [logger]
+  logger:
+    image: python:3.12-alpine
+    container_name: imu-logger
+    restart: unless-stopped
+    command: ["python", "-u", "/app/server.py"]
+    environment:
+      - TZ=Asia/Seoul
+    volumes:
+      - ./logger:/app:ro
+      - ./logs:/data
+    networks: [npm_network]
+
+networks:
+  npm_network:
+    external: true

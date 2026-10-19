@@ -36,6 +36,12 @@
   #start button { background: #3b82f6; font-size: 18px; padding: 16px 28px; }
   #err { color: #f87171; font-size: 14px; min-height: 1em; }
   [hidden] { display: none !important; }
+  #more { position: fixed; right: 10px; bottom: calc(env(safe-area-inset-bottom) + 70px); display: flex; flex-direction: column; gap: 6px;
+    background: #111827f0; border: 1px solid #ffffff22; border-radius: 14px; padding: 8px; z-index: 5; }
+  #btnCar.on { background: #ea580c; }
+  #btnGps.on { background: #059669; }
+  #btnLog.on { background: #dc2626; }
+  .hint { color: #fb923c; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -65,11 +71,17 @@
 <div class="bar" id="barT" hidden>
   <button class="mode" data-mode>◂ 자세 모드</button>
   <button id="btnReset">원점 초기화</button>
+  <button id="btnCar">🚗 차량</button>
+  <button id="btnGps">🛰 GPS·나침반</button>
+  <button id="btnGrav">⬇ 중력 정렬</button>
+  <button id="btnMore">⋯</button>
+</div>
+<div id="more" hidden>
   <button id="btnRec" class="on">기록 중</button>
   <button id="btnFix" class="on">정지 보정</button>
-  <button id="btnFollow">따라가기</button>
-  <button id="btnGrav">⬇ 중력 정렬</button>
   <button id="btnLevel" class="on">수평 유지</button>
+  <button id="btnFollow">따라가기</button>
+  <button id="btnLog">● 센서 녹화</button>
 </div>
 
 <div id="start">
@@ -89,6 +101,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { Nav, PRESETS } from './nav.js?v=3';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
@@ -194,7 +207,7 @@ const camT = new THREE.PerspectiveCamera(50, 1, 0.005, 200);
 camT.position.set(1.3, 1.1, 1.8);
 const controls = new OrbitControls(camT, canvas);
 controls.enableDamping = true; controls.dampingFactor = 0.12; controls.target.set(0, 0, 0);
-controls.minDistance = 0.15; controls.maxDistance = 300;
+controls.minDistance = 0.15; controls.maxDistance = 1e6;
 controls.enabled = false;
 
 const plot = new THREE.Group(); sceneT.add(plot);       // 좌표축·눈금 (크기 자동 조절)
@@ -214,11 +227,13 @@ const plumb = (() => {
   return { g, str, strGeo, bob, label, anchor: new THREE.Vector3(), len: 1, dir: new THREE.Vector3(0, -1, 0) };
 })();
 let plotSize = 0;
+const axisNames = { x: 'X 오른쪽', z: '앞' };
 function buildPlot(L) {          // L = 축 반길이(m)
   if (L === plotSize) return; plotSize = L;
   plot.children.slice().forEach(o => { plot.remove(o); o.geometry?.dispose?.(); });
-  const step = L <= 1 ? 0.1 : L <= 3 ? 0.25 : L <= 6 ? 0.5 : 1;
-  const major = step * (L <= 1 ? 5 : 4);
+  const nice = (x) => { const e = 10 ** Math.floor(Math.log10(x)), m = x / e; return (m < 1.5 ? 1 : m < 3.5 ? 2.5 : m < 7.5 ? 5 : 10) * e; };
+  const step = nice(L / 10), major = nice(L / 2.5);
+  camT.near = L * 0.003; camT.far = L * 200; camT.updateProjectionMatrix();
   const div = Math.round((2 * L) / step);
   // 그래프 상자: 바닥(채움+격자)은 상자 맨 아래, 원점은 상자 가운데
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(2 * L, 2 * L),
@@ -246,16 +261,17 @@ function buildPlot(L) {          // L = 축 반길이(m)
     const lab = sprite(name, '#' + color.toString(16).padStart(6, '0'), L * 0.09, 70);
     lab.position.copy(v.clone().multiplyScalar(L * 1.12)); plot.add(lab);
     for (let x = major; x < L + 1e-6; x += major) for (const s of [1, -1]) {
-      const t = sprite((s * x).toFixed(major < 1 ? 1 : 0), '#8b96a8', L * 0.075, 60);
+      const val = s * x, txt = Math.abs(val) >= 1000 ? (val / 1000).toFixed(Math.abs(val) % 1000 ? 1 : 0) + 'k' : val.toFixed(major < 1 ? 1 : 0);
+      const t = sprite(txt, '#8b96a8', L * 0.075, 60);
       t.position.copy(v.clone().multiplyScalar(s * x)); t.position.y += (dir[1] ? 0 : L * 0.03);
       if (dir[1]) t.position.x += L * 0.06;
       plot.add(t);
     }
   };
-  axis([1, 0, 0], 0xef4444, 'X 오른쪽');
+  axis([1, 0, 0], 0xef4444, axisNames.x);
   axis([0, 1, 0], 0x22c55e, '▲ 위');
   const down = sprite('▼ 아래', '#22c55e', L * 0.09, 70); down.position.set(0, -L * 1.12, 0); plot.add(down);
-  axis([0, 0, -1], 0x3b82f6, '앞');
+  axis([0, 0, -1], 0x3b82f6, axisNames.z);
   const unit = sprite('단위: m', '#64748b', L * 0.05, 48); unit.position.set(-L, 0, L); plot.add(unit);
 }
 buildPlot(1);
@@ -305,32 +321,28 @@ function onOrientation(e) {
   last = { a: e.alpha, b: e.beta, g: e.gamma };
   if (e.webkitCompassHeading != null) heading = e.webkitCompassHeading;
   if (alphaOffset === null) alphaOffset = e.alpha;
+  nav.orientation(e.alpha, e.beta, e.gamma, e.webkitCompassHeading, e.webkitCompassAccuracy);
+  if (logging) logRows.push(['o', +(e.timeStamp ?? performance.now()).toFixed(1), r3(e.alpha), r3(e.beta), r3(e.gamma), r3(e.webkitCompassHeading), r3(e.webkitCompassAccuracy)]);
   euler.set(e.beta * deg, e.gamma * deg, (e.alpha - alphaOffset) * deg, 'ZXY');
   qTarget.setFromEuler(euler).premultiply(qEarthToThree);
 }
 
-// ---------- 관성 항법 (가속도 2중 적분) ----------
-const nav = {
-  pos: new THREE.Vector3(), vel: new THREE.Vector3(), bias: new THREE.Vector3(),
-  aW: new THREE.Vector3(), aPrev: new THREE.Vector3(), gW: new THREE.Vector3(),
-  signAcc: 0, nSign: 0, sign: 1, lastTs: null, stillN: 0, still: true,
-  dist: 0, rec: true, fix: true, warm: 0, maxDisp: 0,
-};
-const STILL_ACC = 0.18;    // m/s² 이하이면 정지 후보
-const STILL_GYRO = 10;     // °/s 이하이면 정지 후보
-const STILL_FRAMES = 8;    // 연속 프레임 수 (약 0.13초)
-const v3 = new THREE.Vector3();
+// ---------- 관성 항법 (가속도 2중 적분, 계산은 nav.js) ----------
+const nav = new Nav(PRESETS.normal);
+const r3 = (v) => v == null ? null : Math.round(v * 1000) / 1000;
+let logging = false, logRows = [], logT0 = 0;
+let segIdx = 0; const segPrevP = new THREE.Vector3(), segPrevC = new THREE.Color(), segLastPt = new THREE.Vector3();
 
 function navReset() {
-  nav.pos.set(0, 0, 0); nav.vel.set(0, 0, 0); nav.dist = 0; nav.maxDisp = 0; nav.warm = 0;
+  nav.reset();
   nPts = 0; trailGeo.instanceCount = 0; shadowGeo.setDrawRange(0, 0); lastPt.set(0, 0, 0);
-  addPoint(0);
+  addPoint(nav.pos, 0);
   if (last) { alphaOffset = last.a; onOrientation({ alpha: last.a, beta: last.b, gamma: last.g }); }
   buildPlot(1); gravityView();
 }
-function addPoint(speed) {
+function addPoint(p, speed) {
   if (nPts >= MAXP) return;
-  const i = nPts * 3, p = nav.pos;
+  const i = nPts * 3;
   shadowPos[i] = p.x; shadowPos[i + 1] = 0; shadowPos[i + 2] = p.z;
   const c = new THREE.Color().setHSL(0.6 - Math.min(speed / 1.5, 1) * 0.6, 0.9, 0.58);
   if (nPts > 0) {
@@ -340,57 +352,9 @@ function addPoint(speed) {
     segPos.needsUpdate = true; segCol.needsUpdate = true;
     trailGeo.instanceCount = nPts;
   }
-  prevP.copy(p); prevC.copy(c);
+  prevP.copy(p); prevC.copy(c); lastPt.copy(p);
   nPts++;
   shadowGeo.setDrawRange(0, nPts); shadowGeo.attributes.position.needsUpdate = true;
-}
-
-function integrate(e) {
-  if (!gotOrientation) return;
-  const ts = e.timeStamp ?? performance.now();
-  if (nav.lastTs == null) { nav.lastTs = ts; return; }
-  let dt = (ts - nav.lastTs) / 1000; nav.lastTs = ts;
-  if (!(dt > 0)) return; if (dt > 0.1) dt = 0.1;      // 백그라운드 복귀 등 큰 공백 방지
-
-  // 중력 포함 가속도로 부호 규약 자동 판정 (iOS는 스펙과 부호가 반대)
-  const ag = e.accelerationIncludingGravity;
-  if (ag && ag.x != null && nav.nSign < 60) {
-    nav.gW.set(ag.x, ag.y, ag.z).applyQuaternion(qTarget);
-    nav.signAcc += nav.gW.y; nav.nSign++;
-    nav.sign = nav.signAcc >= 0 ? 1 : -1;
-  }
-  const a = e.acceleration;
-  if (a && a.x != null) nav.aW.set(a.x, a.y, a.z).multiplyScalar(nav.sign).applyQuaternion(qTarget);
-  else if (ag && ag.x != null) { nav.aW.set(ag.x, ag.y, ag.z).multiplyScalar(nav.sign).applyQuaternion(qTarget); nav.aW.y -= 9.81; }
-  else return;
-
-  const r = e.rotationRate;
-  const gyro = r ? Math.hypot(r.alpha || 0, r.beta || 0, r.gamma || 0) : 0;
-  const still = nav.aW.length() < STILL_ACC && gyro < STILL_GYRO;
-  nav.stillN = still ? nav.stillN + 1 : 0;
-  nav.still = nav.stillN >= STILL_FRAMES;
-
-  if (nav.fix && nav.still) {
-    // 정지 상태: 속도 0으로 고정(ZUPT) + 센서 치우침(바이어스) 학습
-    nav.vel.set(0, 0, 0);
-    nav.bias.lerp(nav.aW, 0.05);
-    nav.aPrev.set(0, 0, 0);
-    nav.warm = Math.min(nav.warm + 1, 1000);
-    return;
-  }
-  v3.copy(nav.aW).sub(nav.bias);
-  if (v3.length() < 0.04) v3.set(0, 0, 0);            // 미세 잡음 제거
-  // 사다리꼴 적분
-  const vOld = nav.vel.clone();
-  nav.vel.addScaledVector(v3.clone().add(nav.aPrev).multiplyScalar(0.5), dt);
-  nav.aPrev.copy(v3);
-  if (nav.fix) nav.vel.multiplyScalar(Math.exp(-0.35 * dt));   // 약한 감쇠로 누적 오차 억제
-  if (nav.vel.length() > 6) nav.vel.setLength(6);
-  const step = vOld.add(nav.vel).multiplyScalar(0.5 * dt);
-  if (!nav.rec) return;
-  nav.pos.add(step); nav.dist += step.length();
-  nav.maxDisp = Math.max(nav.maxDisp, Math.abs(nav.pos.x), Math.abs(nav.pos.y), Math.abs(nav.pos.z));
-  if (nav.pos.distanceTo(lastPt) > 0.004) { addPoint(nav.vel.length()); lastPt.copy(nav.pos); }
 }
 
 function onMotion(e) {
@@ -398,7 +362,23 @@ function onMotion(e) {
   if (a && a.x != null) lin.set(a.x, a.y, a.z);
   if (ag && ag.x != null) accG = { x: ag.x, y: ag.y, z: ag.z };
   if (r && r.alpha != null) rate = { a: r.alpha, b: r.beta, g: r.gamma };
-  integrate(e);
+  const ts = e.timeStamp ?? performance.now();
+  if (logging) logRows.push(['m', +ts.toFixed(1), r3(a?.x), r3(a?.y), r3(a?.z), r3(ag?.x), r3(ag?.y), r3(ag?.z), r3(r?.alpha), r3(r?.beta), r3(r?.gamma), r3(e.interval)]);
+  const res = nav.motion(ts, a, ag, r);
+  if (nav.segStarted) {          // 움직임 구간 시작: 나중에 보정해서 다시 그릴 위치 기억
+    nav.segStarted = false;
+    segIdx = nPts; segPrevP.copy(prevP); segPrevC.copy(prevC); segLastPt.copy(lastPt);
+  }
+  if (res === 1) {
+    if (lastPt.distanceTo(nav.pos) > 0.004) addPoint(nav.pos, nav.vel.length());
+  } else if (res === 2 && nav.lastSeg) {
+    // 정지 확인 → 구간 끝 속도 오차로 보정된 경로로 다시 그림
+    nPts = segIdx; prevP.copy(segPrevP); prevC.copy(segPrevC); lastPt.copy(segLastPt);
+    const s = nav.lastSeg;
+    for (let i = 1; i < s.length; i++) if (lastPt.distanceTo(s[i]) > 0.004 || i === s.length - 1) addPoint(s[i], s[i].sp);
+    trailGeo.instanceCount = Math.max(0, nPts - 1);
+    nav.lastSeg = null;
+  }
 }
 
 async function start() {
@@ -437,7 +417,7 @@ function setMode(m) {
   if (m === 'T' && nPts === 0) navReset();
 }
 document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => setMode(mode === 'A' ? 'T' : 'A')));
-$('btnZero').addEventListener('click', () => { if (last) { alphaOffset = last.a; onOrientation({ alpha: last.a, beta: last.b, gamma: last.g }); } });
+$('btnZero').addEventListener('click', () => { if (last) { alphaOffset = last.a; nav.alphaOffset = last.a; onOrientation({ alpha: last.a, beta: last.b, gamma: last.g }); } });
 $('btnView').addEventListener('click', () => { viewIdx = (viewIdx + 1) % views.length; applyView(); $('btnView').textContent = '시점: ' + views[viewIdx].name; });
 $('btnVec').addEventListener('click', (e) => { accArrow.visible = !accArrow.visible; e.currentTarget.classList.toggle('on', accArrow.visible); });
 $('btnReset').addEventListener('click', navReset);
@@ -447,6 +427,64 @@ $('btnRec').addEventListener('click', (e) => {
   if (!nav.rec) nav.vel.set(0, 0, 0);
 });
 $('btnFix').addEventListener('click', (e) => { nav.fix = !nav.fix; e.currentTarget.classList.toggle('on', nav.fix); });
+let carMode = false;
+$('btnCar').addEventListener('click', (e) => {
+  carMode = !carMode; e.currentTarget.classList.toggle('on', carMode);
+  nav.setParams(carMode ? PRESETS.vehicle : PRESETS.normal);
+});
+// GPS·나침반 융합
+let gpsWatch = null, gpsErr = '';
+function gpsLine() {
+  const age = (performance.now() - nav.gpsFixT) / 1000;
+  const g = nav.origin
+    ? `🛰 GPS ±${(nav.gpsAcc ?? 0).toFixed(0)}m · ${nav.gpsSpeed != null ? (nav.gpsSpeed * 3.6).toFixed(0) + 'km/h' : '속도 없음'} · ${nav.gpsN}회${age > 3 ? ` · <span class="hint">${age.toFixed(0)}초 전</span>` : ''}`
+    : `🛰 <span class="hint">${gpsErr || 'GPS 신호 대기 중…'}</span>`;
+  const c = nav.yawCorr != null
+    ? `🧭 방위 보정 ${nav.yawCorr > 180 ? (nav.yawCorr - 360).toFixed(1) : nav.yawCorr.toFixed(1)}°${nav.headingAcc != null ? ` (±${nav.headingAcc.toFixed(0)}°)` : ''}`
+    : '🧭 <span class="hint">나침반 대기</span>';
+  return g + ' · ' + c;
+}
+function onGps(pos) {
+  const c = pos.coords, f = { ts: performance.now(), lat: c.latitude, lon: c.longitude, alt: c.altitude, acc: c.accuracy,
+    altAcc: c.altitudeAccuracy, speed: c.speed, heading: c.heading };
+  gpsErr = '';
+  nav.gps(f);
+  if (logging) logRows.push(['g', +f.ts.toFixed(1), f.lat, f.lon, r3(f.alt), r3(f.acc), r3(f.altAcc), r3(f.speed), r3(f.heading)]);
+}
+$('btnGps').addEventListener('click', (e) => {
+  const on = !nav.gpsOn;
+  if (on && !('geolocation' in navigator)) { gpsErr = '이 브라우저는 위치를 지원하지 않습니다'; return; }
+  e.currentTarget.classList.toggle('on', on);
+  nav.setGps(on);
+  axisNames.x = on ? '동 →' : 'X 오른쪽'; axisNames.z = on ? '북' : '앞';
+  if (on) {
+    gpsErr = '';
+    gpsWatch = navigator.geolocation.watchPosition(onGps, (err) => {
+      gpsErr = err.code === 1 ? '위치 권한 거부 — 설정 > Safari > 위치에서 허용' : '위치 오류: ' + err.message;
+    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+    if (!follow) $('btnFollow').click();
+  } else if (gpsWatch != null) { navigator.geolocation.clearWatch(gpsWatch); gpsWatch = null; }
+  navReset();
+  plotSize = 0; buildPlot(1); gravityView();
+});
+$('btnMore').addEventListener('click', () => { $('more').hidden = !$('more').hidden; });
+// 센서 원본 녹화 → 서버 업로드 (알고리즘 조정용)
+$('btnLog').addEventListener('click', async (e) => {
+  const b = e.currentTarget;
+  if (!logging) {
+    logRows = []; logT0 = Date.now(); logging = true; b.classList.add('on'); b.textContent = '■ 녹화 중지·전송';
+    return;
+  }
+  logging = false; b.classList.remove('on'); b.textContent = '전송 중…';
+  const body = JSON.stringify({ startedAt: new Date(logT0).toISOString(), seconds: (Date.now() - logT0) / 1000,
+    ua: navigator.userAgent, carMode, rows: logRows });
+  try {
+    const res = await fetch('/api/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    const j = await res.json();
+    b.textContent = res.ok ? `✓ 전송됨 (${j.name})` : '전송 실패';
+  } catch (err) { b.textContent = '전송 실패'; }
+  setTimeout(() => { b.textContent = '● 센서 녹화'; }, 4000);
+});
 let follow = false;
 $('btnFollow').addEventListener('click', (e) => { follow = !follow; e.currentTarget.classList.toggle('on', follow); });
 let level = true;
@@ -471,7 +509,7 @@ addEventListener('resize', resize); resize();
 
 // ---------- 루프 ----------
 const tmp = new THREE.Vector3(), prevTarget = new THREE.Vector3(), gDev = new THREE.Vector3(), qInv = new THREE.Quaternion();
-let rollSm = 0;
+let rollSm = 0; const qNav = new THREE.Quaternion();
 const fmt = (v, d = 1) => (v >= 0 ? '+' : '') + v.toFixed(d);
 let hudT = 0;
 function frame(t) {
@@ -501,8 +539,9 @@ function frame(t) {
   }
 
   // 궤적 모드
-  phoneT.quaternion.slerp(qTarget, 0.5);
+  if (nav.compassOn && nav.q) phoneT.quaternion.slerp(qNav.set(...nav.q), 0.5); else phoneT.quaternion.slerp(qTarget, 0.5);
   phoneT.position.copy(nav.pos);
+  phoneT.scale.setScalar(0.1 * Math.max(1, plotSize / 4));
   const dp = dropGeo.attributes.position;
   dp.setXYZ(0, nav.pos.x, nav.pos.y, nav.pos.z); dp.setXYZ(1, nav.pos.x, -plotSize, nav.pos.z); dp.needsUpdate = true;
   shadow.position.y = -plotSize + 0.002;
@@ -516,7 +555,7 @@ function frame(t) {
   plumb.label.position.copy(end).add(new THREE.Vector3(plotSize * 0.17, -plotSize * 0.06, 0));
   drop.computeLineDistances();
   // 축 범위 자동 확대
-  const need = [1, 2, 3, 5, 8, 12, 20].find(L => nav.maxDisp < L * 0.85) || 20;
+  const need = [1, 2, 3, 5, 8, 12, 20, 35, 60, 100, 200, 350, 600, 1000, 2000, 3500, 6000, 10000, 20000].find(L => nav.maxDisp < L * 0.85) || 20000;
   if (need > plotSize) { const old = plotSize; buildPlot(need); camT.position.sub(controls.target).multiplyScalar(need / old).add(controls.target); }
   if (follow) {
     prevTarget.copy(controls.target);
@@ -544,9 +583,12 @@ function frame(t) {
       ? '<span id="still" style="background:#16a34a33;color:#4ade80">정지</span>'
       : '<span id="still" style="background:#f59e0b33;color:#fbbf24">이동</span>';
     $('ttxt').innerHTML =
-      `${state} 위치 X ${fmt(nav.pos.x, 2)} · 위 ${fmt(nav.pos.y, 2)} · 앞 ${fmt(-nav.pos.z, 2)} m<br>` +
-      `점 ${nPts.toLocaleString()}개 · 보정값 ${nav.bias.length().toFixed(3)} m/s² · 갱신 ${hz.toFixed(0)}Hz` +
-      (nav.warm < 30 ? ' · <b style="color:#fbbf24">처음엔 1초 정도 가만히 두세요</b>' : '');
+      `${state} 위치 ${nav.gpsOn ? '동' : 'X'} ${fmt(nav.pos.x, 2)} · 위 ${fmt(nav.pos.y, 2)} · ${nav.gpsOn ? '북' : '앞'} ${fmt(-nav.pos.z, 2)} m<br>` +
+      `진동 ${nav.noise.toFixed(2)} · 정지기준 ${nav.thr.toFixed(2)} · 흔들림 ${nav.std.toFixed(2)} m/s² · ${hz.toFixed(0)}Hz` +
+      (nav.gpsOn ? '<br>' + gpsLine() : '') +
+      (logging ? ` · <b style="color:#f87171">녹화 ${((Date.now() - logT0) / 1000).toFixed(0)}초</b>` : '') +
+      (nav.warm < 30 && !nav.gpsOn ? '<br><b style="color:#fbbf24">처음엔 1초 정도 가만히 두세요</b>' : '') +
+      (!carMode && nav.noise > 0.12 ? '<br><span class="hint">진동이 큽니다 — 🚗 차량 모드를 켜세요</span>' : '');
   }
   renderer.render(sceneT, camT);
 }
@@ -560,15 +602,20 @@ if (!/iPhone|iPad|Android/i.test(navigator.userAgent) || !('ondeviceorientation'
   demo = setInterval(() => {
     k += 0.016; ts += 16;
     onOrientation({ alpha: 20 * Math.sin(k * 0.5), beta: 60 + 15 * Math.sin(k), gamma: 15 * Math.sin(k * 1.3) });
-    // 정지 상태에서 출발하는 닫힌 곡선: x=r(1-cos wt), z=-r/2(1-cos 2wt), y=h(1-cos 2wt)
-    const w = 1.2, r = 0.5, tt = k - 1;
-    const aw = tt < 0 ? new THREE.Vector3() : new THREE.Vector3(r * w * w * Math.cos(w * tt),
-      0.15 * 4 * w * w * Math.cos(2 * w * tt), -2 * r * w * w * Math.cos(2 * w * tt));
+    // 1.5초 쉬고 3초 동안 원 두 바퀴(반지름 0.3m)를 반복 — 정지 상태에서 출발·도착
+    const cyc = 4.5, tt = (k % cyc) - 1.5, dur = 3, R = 0.3;
+    let aw = new THREE.Vector3();
+    if (tt > 0) {
+      const u = tt / dur, s = (1 - Math.cos(Math.PI * u)) / 2, sd = Math.PI * Math.sin(Math.PI * u) / (2 * dur), sdd = Math.PI * Math.PI * Math.cos(Math.PI * u) / (2 * dur * dur);
+      const th = 4 * Math.PI * s, thd = 4 * Math.PI * sd, thdd = 4 * Math.PI * sdd;
+      // x=R(1-cos th), z=-R sin th 의 2차 미분
+      aw.set(R * (Math.cos(th) * thd * thd + Math.sin(th) * thdd), 0, -R * (-Math.sin(th) * thd * thd + Math.cos(th) * thdd));
+    }
     const ad = aw.applyQuaternion(qTarget.clone().invert());
     const gd = new THREE.Vector3(0, 9.81, 0).applyQuaternion(qTarget.clone().invert());
     onMotion({ timeStamp: ts, acceleration: { x: ad.x, y: ad.y, z: ad.z },
       accelerationIncludingGravity: { x: ad.x + gd.x, y: ad.y + gd.y, z: ad.z + gd.z },
-      rotationRate: { alpha: k < 1 ? 0 : 30, beta: 0, gamma: 0 } });
+      rotationRate: { alpha: aw.length() > 0.01 ? 30 : 0, beta: 0, gamma: 0 } });
   }, 16);
 }
 window.__imu = { setMode, nav, navReset };
