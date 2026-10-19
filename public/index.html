@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b0d12">
+<title>IMU 뷰어</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: #0b0d12; color: #e8ecf3;
+    font-family: -apple-system, "Pretendard", system-ui, sans-serif; overflow: hidden;
+    -webkit-user-select: none; user-select: none; touch-action: none; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #hud { position: fixed; left: 0; right: 0; top: 0; padding: calc(env(safe-area-inset-top) + 10px) 14px 10px;
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; pointer-events: none;
+    background: linear-gradient(#0b0d12ee, #0b0d1200); }
+  .card { background: #ffffff10; border: 1px solid #ffffff18; border-radius: 12px; padding: 7px 9px; }
+  .lbl { font-size: 11px; color: #9aa4b2; }
+  .val { font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .sub { font-size: 11px; color: #9aa4b2; font-variant-numeric: tabular-nums; line-height: 1.45; }
+  #raw { grid-column: 1 / -1; }
+  #bar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; gap: 8px; justify-content: center;
+    padding: 10px 14px calc(env(safe-area-inset-bottom) + 12px); }
+  button { appearance: none; border: 0; border-radius: 12px; padding: 12px 14px; font-size: 15px; font-weight: 600;
+    color: #fff; background: #ffffff1c; touch-action: manipulation; }
+  button.on { background: #3b82f6; }
+  #start { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 16px; background: #0b0d12f2; text-align: center; padding: 24px; z-index: 10; }
+  #start h1 { margin: 0; font-size: 26px; }
+  #start p { margin: 0; color: #9aa4b2; font-size: 15px; line-height: 1.6; }
+  #start button { background: #3b82f6; font-size: 18px; padding: 16px 28px; }
+  #err { color: #f87171; font-size: 14px; min-height: 1em; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud">
+  <div class="card"><div class="lbl">앞뒤 기울기</div><div class="val" id="pitch">–</div></div>
+  <div class="card"><div class="lbl">좌우 기울기</div><div class="val" id="roll">–</div></div>
+  <div class="card"><div class="lbl">방향</div><div class="val" id="yaw">–</div></div>
+  <div class="card" id="raw"><div class="sub" id="rawtxt">센서 대기 중</div></div>
+</div>
+
+<div id="bar">
+  <button id="btnZero">정면 맞추기</button>
+  <button id="btnVec" class="on">가속도 화살표</button>
+  <button id="btnView">시점 전환</button>
+</div>
+
+<div id="start">
+  <h1>📱 IMU 뷰어</h1>
+  <p>아이폰의 자이로·가속도 센서로<br>현재 자세를 3D로 실시간 표시합니다.<br><br>
+  화면 회전 잠금을 켜고 시작하세요.</p>
+  <button id="btnStart">센서 사용 시작</button>
+  <div id="err"></div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const $ = (id) => document.getElementById(id);
+const deg = THREE.MathUtils.DEG2RAD;
+
+// ---------- 장면 ----------
+const canvas = $('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 3));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0d12);
+const camera = new THREE.PerspectiveCamera(40, 1, 0.01, 100);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x334155, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+sun.position.set(2, 4, 3);
+scene.add(sun);
+
+const grid = new THREE.GridHelper(6, 24, 0x3b4252, 0x1f2430);
+grid.position.y = -1.1;
+scene.add(grid);
+
+// 바닥 방위 표시 (정면 맞추기 기준 방향 = 화면 안쪽)
+function label(text, color) {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+  const g = cv.getContext('2d');
+  g.fillStyle = color; g.font = 'bold 72px -apple-system, sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, 64, 68);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 0.4),
+    new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cv), transparent: true, depthWrite: false }));
+  m.rotation.x = -Math.PI / 2; return m;
+}
+const compass = new THREE.Group();
+compass.position.y = -1.09;
+[['앞', 0, -2.4, '#60a5fa'], ['뒤', 0, 2.4, '#64748b'], ['좌', -2.4, 0, '#64748b'], ['우', 2.4, 0, '#64748b']]
+  .forEach(([t, x, z, c]) => { const l = label(t, c); l.position.set(x, 0, z); compass.add(l); });
+scene.add(compass);
+
+// ---------- 아이폰 모델 (기기 좌표: X=오른쪽, Y=화면 위쪽, Z=화면 밖) ----------
+const W = 0.716, H = 1.476, D = 0.083, R = 0.11;   // 아이폰 16 Pro 비율 (dm 단위)
+function roundedRect(w, h, r) {
+  const s = new THREE.Shape(), x = -w / 2, y = -h / 2;
+  s.moveTo(x + r, y); s.lineTo(x + w - r, y); s.quadraticCurveTo(x + w, y, x + w, y + r);
+  s.lineTo(x + w, y + h - r); s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  s.lineTo(x + r, y + h); s.quadraticCurveTo(x, y + h, x, y + h - r);
+  s.lineTo(x, y + r); s.quadraticCurveTo(x, y, x + r, y); return s;
+}
+const phone = new THREE.Group();
+const bodyGeo = new THREE.ExtrudeGeometry(roundedRect(W, H, R),
+  { depth: D, bevelEnabled: true, bevelThickness: 0.008, bevelSize: 0.008, bevelSegments: 4, curveSegments: 16 });
+bodyGeo.translate(0, 0, -D / 2);
+phone.add(new THREE.Mesh(bodyGeo, new THREE.MeshStandardMaterial({ color: 0x8a8378, metalness: 0.85, roughness: 0.35 })));
+
+// 화면 (캔버스 텍스처)
+const sc = document.createElement('canvas'); sc.width = 512; sc.height = 1056;
+const sg = sc.getContext('2d');
+const grad = sg.createLinearGradient(0, 0, 512, 1056);
+grad.addColorStop(0, '#1e3a8a'); grad.addColorStop(1, '#7c3aed');
+sg.fillStyle = grad; sg.fillRect(0, 0, 512, 1056);
+sg.fillStyle = '#000'; sg.beginPath(); sg.roundRect(176, 30, 160, 46, 23); sg.fill();   // 다이내믹 아일랜드
+sg.fillStyle = '#ffffffdd'; sg.font = 'bold 120px -apple-system, sans-serif'; sg.textAlign = 'center';
+sg.fillText('▲', 256, 330); sg.font = 'bold 64px -apple-system, sans-serif'; sg.fillText('위', 256, 430);
+sg.font = '600 44px -apple-system, sans-serif'; sg.fillStyle = '#ffffffaa'; sg.fillText('IMU', 256, 640);
+sg.fillStyle = '#ffffff99'; sg.beginPath(); sg.roundRect(176, 1010, 160, 10, 5); sg.fill();
+const screenMesh = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(W - 0.03, H - 0.03, R - 0.015)),
+  new THREE.MeshStandardMaterial({ map: new THREE.CanvasTexture(sc), roughness: 0.15, metalness: 0.1, emissive: 0x111122 }));
+{ // UV 매핑
+  const pos = screenMesh.geometry.attributes.position, uv = [];
+  for (let i = 0; i < pos.count; i++) uv.push(pos.getX(i) / (W - 0.03) + 0.5, pos.getY(i) / (H - 0.03) + 0.5);
+  screenMesh.geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+}
+screenMesh.position.z = D / 2 + 0.0095;
+phone.add(screenMesh);
+
+// 뒷면 카메라 범프 (뒤에서 보면 왼쪽 위)
+const bump = new THREE.Mesh(new THREE.ExtrudeGeometry(roundedRect(0.3, 0.3, 0.07), { depth: 0.02, bevelEnabled: false }),
+  new THREE.MeshStandardMaterial({ color: 0x6f695f, metalness: 0.7, roughness: 0.4 }));
+bump.rotation.y = Math.PI; bump.position.set(W / 2 - 0.19, H / 2 - 0.19, -D / 2 - 0.008);
+phone.add(bump);
+const lensMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, metalness: 0.9, roughness: 0.1 });
+[[-0.065, 0.065], [-0.065, -0.065], [0.065, 0]].forEach(([dx, dy]) => {
+  const l = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.048, 0.025, 24), lensMat);
+  l.rotation.x = Math.PI / 2; l.position.set(W / 2 - 0.19 - dx, H / 2 - 0.19 + dy, -D / 2 - 0.035);
+  phone.add(l);
+});
+// 측면 버튼
+const btnMat = new THREE.MeshStandardMaterial({ color: 0x8a8378, metalness: 0.85, roughness: 0.3 });
+const addBtn = (x, y, h) => { const b = new THREE.Mesh(new THREE.BoxGeometry(0.012, h, 0.03), btnMat); b.position.set(x, y, 0); phone.add(b); };
+addBtn(W / 2 + 0.006, 0.28, 0.16); addBtn(-W / 2 - 0.006, 0.4, 0.07); addBtn(-W / 2 - 0.006, 0.22, 0.12); addBtn(-W / 2 - 0.006, 0.06, 0.12);
+
+// 기기 축 (빨강=X 오른쪽, 초록=Y 위, 파랑=Z 화면 밖)
+const axes = new THREE.AxesHelper(0.55); axes.material.depthTest = false; axes.renderOrder = 2;
+phone.add(axes);
+scene.add(phone);
+
+// 가속도 화살표 (중력 제외 선가속도, 월드 좌표)
+const accArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(), 0.001, 0xf59e0b, 0.12, 0.07);
+scene.add(accArrow);
+// 중력 방향 화살표 (월드 아래)
+const gArrow = new THREE.ArrowHelper(new THREE.Vector3(0, -1, 0), new THREE.Vector3(0, 0, 0), 0.9, 0x22d3ee, 0.1, 0.06);
+gArrow.visible = false; scene.add(gArrow);
+
+// ---------- 카메라 시점 ----------
+const views = [
+  { name: '정면', pos: [0, 0.6, 3.6] },
+  { name: '위', pos: [0, 4.2, 0.01] },
+  { name: '측면', pos: [3.6, 0.6, 0] },
+  { name: '사선', pos: [2.4, 2.0, 2.6] },
+];
+let viewIdx = 0;
+function applyView() { camera.position.set(...views[viewIdx].pos); camera.lookAt(0, 0, 0); }
+applyView();
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / h;
+  camera.fov = w < h ? 46 : 32; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+
+// ---------- 센서 ----------
+// deviceorientation: R = Rz(alpha)·Rx(beta)·Ry(gamma), 지구 좌표(X=동, Y=북, Z=위) 기준
+// 지구 좌표 → three.js 좌표(Y=위, -Z=북) 변환: X축 -90° 회전
+const qEarthToThree = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
+const euler = new THREE.Euler();
+const qTarget = new THREE.Quaternion();
+const qYawFix = new THREE.Quaternion();
+let alphaOffset = null;     // 정면 맞추기 기준
+let last = null, heading = null, gotOrientation = false;
+const lin = new THREE.Vector3(), linSmooth = new THREE.Vector3();
+let rate = { a: 0, b: 0, g: 0 }, accG = { x: 0, y: 0, z: 0 }, hz = 0, nOri = 0, tHz = performance.now();
+
+function onOrientation(e) {
+  if (e.alpha == null) return;
+  gotOrientation = true; nOri++;
+  last = { a: e.alpha, b: e.beta, g: e.gamma };
+  if (e.webkitCompassHeading != null) heading = e.webkitCompassHeading;
+  if (alphaOffset === null) alphaOffset = e.alpha;
+  euler.set(e.beta * deg, e.gamma * deg, (e.alpha - alphaOffset) * deg, 'ZXY');
+  qTarget.setFromEuler(euler).premultiply(qEarthToThree);
+}
+function onMotion(e) {
+  const a = e.acceleration, ag = e.accelerationIncludingGravity, r = e.rotationRate;
+  if (a && a.x != null) lin.set(a.x, a.y, a.z);           // 기기 좌표 m/s²
+  if (ag && ag.x != null) accG = { x: ag.x, y: ag.y, z: ag.z };
+  if (r && r.alpha != null) rate = { a: r.alpha, b: r.beta, g: r.gamma };
+}
+
+async function start() {
+  $('err').textContent = '';
+  if (!window.isSecureContext) { $('err').textContent = 'HTTPS 주소로 접속해야 센서를 쓸 수 있습니다.'; return; }
+  try {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      const [p1, p2] = await Promise.all([
+        DeviceOrientationEvent.requestPermission(),
+        typeof DeviceMotionEvent?.requestPermission === 'function' ? DeviceMotionEvent.requestPermission() : 'granted',
+      ]);
+      if (p1 !== 'granted') { $('err').textContent = '센서 권한이 거부되었습니다. Safari를 완전히 닫았다가 다시 열어 주세요.'; return; }
+      if (p2 !== 'granted') $('err').textContent = '가속도 권한 거부 — 자세만 표시합니다.';
+    }
+  } catch (err) { $('err').textContent = '권한 요청 실패: ' + err.message; return; }
+  alphaOffset = null;
+  addEventListener('deviceorientation', onOrientation);
+  addEventListener('devicemotion', onMotion);
+  $('start').style.display = 'none';
+  setTimeout(() => {
+    if (!gotOrientation) {
+      $('start').style.display = 'flex';
+      $('err').textContent = '센서 값이 들어오지 않습니다. 이 기기에 자이로 센서가 없거나 브라우저가 막고 있습니다.';
+    }
+  }, 2500);
+}
+$('btnStart').addEventListener('click', start);
+
+$('btnZero').addEventListener('click', () => { if (last) alphaOffset = last.a; });
+$('btnView').addEventListener('click', () => { viewIdx = (viewIdx + 1) % views.length; applyView(); $('btnView').textContent = '시점: ' + views[viewIdx].name; });
+$('btnVec').addEventListener('click', (e) => {
+  const on = !accArrow.visible; accArrow.visible = on; e.currentTarget.classList.toggle('on', on);
+});
+
+// ---------- 루프 ----------
+const tmp = new THREE.Vector3();
+const fmt = (v, d = 1) => (v >= 0 ? '+' : '') + v.toFixed(d);
+let hudT = 0;
+function frame(t) {
+  requestAnimationFrame(frame);
+  // 부드럽게 따라가기 (센서 60Hz, 화면 120Hz 보간)
+  phone.quaternion.slerp(qTarget, 0.35);
+
+  // 선가속도: 기기 좌표 → 월드 좌표
+  linSmooth.lerp(lin, 0.25);
+  tmp.copy(linSmooth).applyQuaternion(phone.quaternion);
+  const mag = tmp.length();
+  if (mag > 0.05) { accArrow.setDirection(tmp.clone().normalize()); accArrow.setLength(Math.min(0.25 + mag * 0.12, 2), 0.12, 0.07); }
+  else accArrow.setLength(0.001, 0.0005, 0.0005);
+
+  if (t - hudT > 80 && last) {
+    hudT = t;
+    if (t - tHz > 1000) { hz = nOri * 1000 / (t - tHz); nOri = 0; tHz = t; }
+    $('pitch').textContent = fmt(last.b, 0) + '°';
+    $('roll').textContent = fmt(last.g, 0) + '°';
+    $('yaw').textContent = heading != null ? Math.round(heading) + '°' : Math.round(last.a) + '°';
+    $('rawtxt').innerHTML =
+      `자이로(°/s) X ${fmt(rate.b)} · Y ${fmt(rate.g)} · Z ${fmt(rate.a)}<br>` +
+      `가속도(m/s²) X ${fmt(accG.x, 2)} · Y ${fmt(accG.y, 2)} · Z ${fmt(accG.z, 2)}<br>` +
+      `선가속도 ${linSmooth.length().toFixed(2)} m/s² · 갱신 ${hz.toFixed(0)}Hz` +
+      (heading != null ? ` · 나침반 ${Math.round(heading)}°` : '');
+  }
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(frame);
+
+// 센서 없이 열었을 때(PC) 미리보기용 자동 회전
+if (!('ondeviceorientation' in window) || !/iPhone|iPad|Android/i.test(navigator.userAgent)) {
+  let k = 0; const demo = setInterval(() => {
+    if (gotOrientation) return clearInterval(demo);
+    k += 0.02; onOrientation({ alpha: 30 * Math.sin(k * 0.7), beta: 50 + 30 * Math.sin(k), gamma: 25 * Math.sin(k * 1.3) });
+    gotOrientation = false;
+  }, 16);
+}
+</script>
+</body>
+</html>
