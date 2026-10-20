@@ -1,100 +1,117 @@
-# 📱 IMU 뷰어
+# 📍 위치 기록 (location-log)
 
-![HTML5](https://img.shields.io/badge/HTML5-웹앱-E34F26?style=flat-square&logo=html5&logoColor=white)
-![Three.js](https://img.shields.io/badge/Three.js-0.169-000000?style=flat-square&logo=threedotjs&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-nginx:alpine-2496ED?style=flat-square&logo=docker&logoColor=white)
+![JavaScript](https://img.shields.io/badge/JavaScript-웹앱-F7DF1E?style=flat-square&logo=javascript&logoColor=black)
+![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?style=flat-square&logo=fastapi&logoColor=white)
+![MariaDB](https://img.shields.io/badge/MariaDB-location__log-003545?style=flat-square&logo=mariadb&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-compose-2496ED?style=flat-square&logo=docker&logoColor=white)
 
-아이폰 Safari로 접속하면 기기의 자이로·가속도 센서로 현재 자세를 3D 아이폰 모델에 실시간 반영하고(자세 모드), 가속도를 두 번 적분해 이동 궤적을 3D 그래프에 그리는(궤적 모드) 웹페이지.
+아이폰(Safari·홈 화면 앱)으로 이동 경로를 기록하는 웹앱. 기본은 GPS로 기록하고, 터널처럼 GPS가 끊긴 구간은 자이로·가속도·나침반으로 이어 그린 뒤 GPS가 다시 잡히면 보정한다.
 
-👉 https://imu.b-612.kr
-
----
-
-## ✨ 기능
-
-| 항목 | 설명 |
-|------|------|
-| 3D 자세 표시 | `deviceorientation`(alpha/beta/gamma)을 쿼터니언으로 변환해 아이폰 모델 회전 |
-| 기기 축 | 빨강=X(오른쪽), 초록=Y(화면 위), 파랑=Z(화면 밖) |
-| 가속도 화살표 | `devicemotion.acceleration`(중력 제외)을 월드 좌표로 변환해 주황 화살표로 표시 |
-| 수치 표시 | 앞뒤/좌우 기울기, 방향(나침반), 자이로 각속도, 가속도, 갱신 주기(Hz) |
-| 정면 맞추기 | 현재 바라보는 방향을 화면 안쪽(앞)으로 재설정 |
-| 시점 전환 | 정면 / 위 / 측면 / 사선 |
-| 궤적 모드 | 3D 좌표축(m 눈금, 범위 자동 확대) 위에 이동 경로를 속도별 색으로 표시, 바닥 그림자 궤적, 손가락으로 회전·확대 |
-| 그래프 상자 | 원점은 상자 가운데, 바닥면(채움+격자)은 상자 맨 아래, 천장은 옅은 파랑. 위/아래 라벨 |
-| 추 | 상자 윗모서리에 매달린 추가 항상 중력 방향을 가리키고, 움직이면 가속도 반대쪽으로 흔들림 |
-| 수평 유지 | 폰을 옆으로 기울여도 그래프의 아래가 실제 땅 방향을 향하도록 화면을 반대로 회전 |
-| 중력 정렬 | 위가 위로 보이는 기본 시점으로 카메라 초기화 |
-| 원점 초기화 | 위치·속도·궤적을 지우고 현재 방향을 '앞'으로 설정 |
-| 정지 보정 | 정지 감지 시 속도를 0으로 고정(ZUPT)하고 센서 치우침을 학습해 빼줌, 약한 속도 감쇠 |
+👉 https://location.b-612.kr (Tailscale은 바로, 외부는 로그인) · 센서 실험실 `/lab/`
 
 ---
 
-## 📈 궤적 계산
+## 📱 화면
 
-```mermaid
-flowchart LR
-  A[devicemotion.acceleration<br>기기 좌표] -->|자세 쿼터니언| B[월드 좌표 가속도]
-  B --> C{정지 감지<br>가속도·회전 작음}
-  C -->|정지| D[속도=0, 치우침 학습]
-  C -->|이동| E[치우침 제거 → 사다리꼴 적분<br>가속도→속도→위치]
-  E --> F[궤적 선]
-```
-
-### 🚗 차량 모드
-
-| 처리 | 내용 |
+| 화면 | 내용 |
 |------|------|
-| 저역 통과(5Hz) | 노면·엔진 진동 제거 |
-| 진동 수준 학습 | 최근 6초 흔들림 하위 20%를 평소 진동으로 보고, 그 2.5배 이하이면 정지로 판정 |
-| 기준선 학습 | 정지 중의 가속도(센서 치우침 + 차량 자체 가감속)를 기준선으로 빼줌 |
-| 구간 사후 보정 | 손동작이 끝나 정지가 확인되면 남은 속도를 구간 오차로 보고 경로를 다시 계산해 다시 그림 |
-
-### 🛰 GPS·나침반 융합
-
-- 축마다 위치·속도·가속도 치우침 3개 상태의 칼만 필터: 60Hz 가속도로 예측, 약 1Hz GPS 위치(정확도 반영)·속도·진행 방향으로 보정
-- 차가 멈춘 것을 GPS 속도로 확인했을 때만 정지 보정 (정속 주행 중 진동이 적어도 속도를 0으로 만들지 않음)
-- 나침반(`webkitCompassHeading`)으로 세로축 방위를 계속 맞춰 자이로 방위 드리프트 제거, 월드 좌표 = 동/위/북. 한국 부근은 자북 편차 −8.8° 보정
-- GPS 위치에는 수 m 오차가 있어 cm 단위 손동작이 아니라 차량·보행 경로용
-
-### 🧪 시험 도구
-
-| 명령 | 내용 |
-|------|------|
-| `node tools/sim.mjs` | 합성 진동·차량 가감속·손동작으로 일반/차량 모드 오차 비교 |
-| `node tools/sim_gps.mjs` | 합성 주행(가속·커브·정지)에서 GPS만 쓸 때와 융합 오차 비교 |
-| `node tools/replay.mjs logs/<파일> vehicle` | 아이폰 "센서 녹화"로 올린 실제 로그를 알고리즘에 다시 넣어보기 |
-
-센서 녹화: 궤적 모드 `⋯` → `● 센서 녹화` → 다시 누르면 서버(`/api/log`, `imu-logger` 컨테이너)로 전송되어 `logs/`에 저장.
-
-> [!WARNING]
-> 가속도를 두 번 적분하면 오차가 시간의 제곱으로 커집니다. 수 초 이내 손동작(원·글씨·들어 올리기)은 잘 나오지만, 걸어다니는 수십 초 경로는 정지 보정을 켜도 점점 틀어집니다. 움직임 사이사이 잠깐 멈추면 정확도가 올라갑니다.
-
----
-
-## 🧭 좌표 변환
-
-```mermaid
-flowchart LR
-  A[deviceorientation<br>alpha·beta·gamma] --> B[Euler ZXY<br>Rz·Rx·Ry]
-  B --> C[지구 좌표<br>X=동 Y=북 Z=위]
-  C -->|X축 -90°| D[three.js 좌표<br>Y=위 -Z=앞]
-  D --> E[아이폰 모델 quaternion]
-```
+| 지도 모드 | 전체 화면 지도(네이버, 실패 시 Leaflet+오픈스트리트맵) + 위쪽 오버레이(속도·방향·기록 시간, GPS 상태). 경로는 파랑 실선, 추정 구간은 주황 점선 |
+| 기록 모드 | 오버레이 없음. 기록 중이 아니면 "기록 중이 아닙니다", 기록 중이면 `시각  위도, 경도` 줄이 계속 아래로 붙음(추정 점은 `추정` 표시) |
+| 공통 | 하단 가운데 기록 시작/종료, 왼쪽 작은 버튼 = 화면 전환, 오른쪽 ⚙ = 설정. 화면을 바꿔도 기록 상태는 그대로 |
+| 설정 | 저장된 기록 목록(날짜·거리·시간·점 수), 지도 보기, 이름 변경, 데일리요섭 보내기(연동 준비 중), 삭제 |
 
 > [!NOTE]
-> iOS는 HTTPS + 사용자 터치 후 `DeviceOrientationEvent.requestPermission()` 호출이 있어야 센서 값을 줍니다. 권한을 거부했다면 Safari를 완전히 닫았다가 다시 열어야 다시 물어봅니다.
+> iOS 웹앱은 화면이 꺼지거나 다른 앱으로 넘어가면 실행이 멈춘다. 기록 중에는 화면 꺼짐 방지(Wake Lock)를 켜고, 거치대에 꽂아 화면을 켜 둔 채 쓴다. 멈췄다 돌아온 구간은 직선으로 메우지 않고 "기록 없음"으로 남긴다.
+
+---
+
+## 🛰 경로 계산 (`public/track.js`)
+
+```mermaid
+flowchart LR
+  G[GPS 고정점<br>정확도 40m 이내] -->|그대로 기록 src=gps| P[(점)]
+  G -->|3초 이상 끊김<br>속도 2.5m/s 이상| DR[센서 추정 src=imu]
+  DR -->|방향: 직전 GPS 방향 + 자이로 회전량| P
+  DR -->|속도: 직전 GPS 속도 + 진행 방향 가속도 적분| P
+  G2[GPS 복귀] -->|끝점 차이를 구간 전체에 시간 비례로 분배| P
+```
+
+| 학습값 (GPS가 잡힐 때) | 쓰임 |
+|------|------|
+| 진행 방향 가속도 치우침 (5초 창: GPS 속도 변화 vs 가속도 적분) | 추정 중 속도 적분에서 빼줌 |
+| 폰 방위 ↔ 진북 차이 (나침반, 자북 편차 −8.8°) | 가속도를 진행 방향으로 나눌 때 사용 |
+| GPS 진행 방향 − 폰 방위 (거치 각도) | 추정 시작 시 방향 기준 |
+
+- 나침반은 차체·터널에서 크게 틀어지므로 2분 이상 끊긴 경우에만, 12° 이내로 어긋날 때만 천천히 반영
+- 끊김이 확정되기까지의 3초도 직전 속도·방향으로 채움
+- 거치대에 고정된 폰을 가정(손에 들고 돌리면 방향 오차)
+
+<details><summary>합성 주행 시험 결과 (<code>node tools/sim_track.mjs</code>)</summary>
+
+80km/h 전후, 터널 70초(약 1.4km, 터널 안 커브·감속 포함), 터널 후반 나침반 30° 교란:
+
+| 조건 | 복귀 직전 오차 | 보정 후 추정점 오차(RMS) |
+|------|------|------|
+| 기본 3회 | 60~115m | 8~13m |
+| 거치 각도 0°, 교란 없음 | 102m | 8m |
+| 가속도 치우침 0.15m/s² | 153m | 19m |
+| 손에 들고 흔들림 | 196m | 25m |
+| 터널 120초(2.4km) | 352m | 57m |
+
+</details>
+
+---
+
+## 🗄 저장
+
+- 폰: 점마다 IndexedDB에 즉시 저장, 기록 상태는 localStorage → 새로고침·앱 재실행 후 자동으로 이어 기록
+- 서버: 5초마다 업로드. `(track_id, seq)` 기준 REPLACE라 재전송·사후 보정이 안전
+- MariaDB `location_log` (계정 `loc_rw`, `.env`)
+
+| 테이블 | 내용 |
+|------|------|
+| `track` | id, client_id, name, started_at, ended_at, distance_m, n_points, n_est, sent_daily_at |
+| `track_pt` | track_id, seq, ts(UTC), lat, lon, alt, acc, spd, hdg, src(`gps`/`imu`) |
+
+<details><summary>API</summary>
+
+| 메서드 | 경로 | 내용 |
+|------|------|------|
+| GET | `/api/config` | 네이버 지도 키 ID, 데일리요섭 연동 여부 |
+| GET/POST | `/api/tracks` | 목록 / 생성(client_id 중복이면 기존 것) |
+| GET/PATCH/DELETE | `/api/tracks/{id}` | 상세(점 포함) / 이름·종료 시각 / 삭제 |
+| POST | `/api/tracks/{id}/points` | 점 일괄 저장 |
+| POST | `/api/tracks/{id}/send-daily` | 데일리요섭 보내기 (우선순위 확정 전 503) |
+| POST | `/api/log` | 센서 원본 녹화(실험실) → `logs/` |
+
+</details>
+
+---
+
+## 🧪 센서 실험실 (`/lab/`)
+
+이전 IMU 뷰어. 3D 자세 표시, 가속도 2중 적분 궤적(일반·차량 모드, 정지 보정, 구간 사후 보정), GPS·나침반 칼만 융합, 센서 원본 녹화(`⋯` → `● 센서 녹화`). 계산은 `public/nav.js`.
 
 ---
 
 ## 🚀 배포
 
-<details><summary>컨테이너 실행</summary>
-
 ```bash
-docker compose up -d   # imu-viewer(nginx 정적) + imu-logger(센서 로그 수신)
+docker compose -p location-log up -d --build   # location-web(nginx 정적) + location-api(FastAPI)
+python tests/e2e.py                            # 아이폰 크기 화면 시험 (기록·새로고침 이어가기·목록·이름·삭제)
 ```
 
-NPM 프록시 호스트: `imu.b-612.kr` → `imu-viewer:80` (인증서 `*.b-612.kr`)
+NPM: `location.b-612.kr` → `location-web:80`, 인증서 `*.b-612.kr`, tailscale-auth(3101) 로그인 보호.
+
+> [!WARNING]
+> 네이버 지도는 NCP 콘솔 Application의 Web 서비스 URL에 `https://location.b-612.kr` 등록이 필요하다. 등록 전에는 자동으로 Leaflet 지도가 뜬다.
+
+<details><summary>시험 도구</summary>
+
+| 명령 | 내용 |
+|------|------|
+| `node tools/sim_track.mjs` | 터널 구간 추정·보정 오차 |
+| `node tools/sim.mjs` / `sim_gps.mjs` | 실험실 궤적(손동작·차량 진동) / GPS 융합 |
+| `node tools/replay.mjs logs/<파일> vehicle` | 실험실 센서 녹화 재생 |
 
 </details>
