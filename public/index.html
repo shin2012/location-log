@@ -109,6 +109,9 @@
   .trk-acts button { font-size: 13px; padding: 6px 10px; border-radius: 9px; background: #ffffff14; }
   .trk-acts button.del { color: #fca5a5; }
   .trk-acts button:disabled { opacity: .45; }
+  .trk-mode { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+  .trk-mode button { font-size: 12px; padding: 4px 10px; border-radius: 14px; background: #ffffff14; color: var(--dim); font-weight: 600; }
+  .trk-mode button.active { background: #2563eb44; color: #93c5fd; }
   .badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 6px; margin-left: 6px; vertical-align: 2px; background: #ffffff14; color: var(--dim); font-weight: 600; }
   .badge.rec { background: #ef444433; color: #fca5a5; }
   .badge.sent { background: #22c55e2a; color: #86efac; }
@@ -192,6 +195,6 @@
 
 <div id="toast" hidden></div>
 
-<script type="module" src="app.js?v=11"></script>
+<script type="module" src="app.js?v=12"></script>
 </body>
 </html>

@@ -59,11 +59,14 @@ def refresh_stats(cur, tid):
     cur.execute("UPDATE track SET distance_m=%s, n_points=%s, n_est=%s WHERE id=%s", (dist, len(pts), n_est, tid))
 
 
+MODES = ("car", "walk", "bicycle", "other")
+
+
 def track_row(r):
     return {"id": r["id"], "client_id": r["client_id"], "name": r["name"],
             "started_at": dt_to_ms(r["started_at"]), "ended_at": dt_to_ms(r["ended_at"]),
             "distance_m": round(r["distance_m"], 1), "n_points": r["n_points"], "n_est": r["n_est"],
-            "sent_daily_at": dt_to_ms(r["sent_daily_at"])}
+            "sent_daily_at": dt_to_ms(r["sent_daily_at"]), "mode": r.get("mode", "car")}
 
 
 @app.get("/api/health")
@@ -152,6 +155,7 @@ def add_points(tid: int, body: PtsIn):
 class TrackPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     ended_at: float | None = None
+    mode: str | None = None
 
 
 @app.patch("/api/tracks/{tid}")
@@ -161,6 +165,10 @@ def patch_track(tid: int, body: TrackPatch):
             cur.execute("UPDATE track SET name=%s WHERE id=%s", (body.name.strip(), tid))
         if body.ended_at is not None:
             cur.execute("UPDATE track SET ended_at=%s WHERE id=%s", (ms_to_dt(body.ended_at), tid))
+        if body.mode is not None:
+            if body.mode not in MODES:
+                raise HTTPException(400, f"mode must be one of {MODES}")
+            cur.execute("UPDATE track SET mode=%s WHERE id=%s", (body.mode, tid))
         cur.execute("SELECT * FROM track WHERE id=%s", (tid,))
         r = cur.fetchone()
         if not r:

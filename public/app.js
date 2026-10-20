@@ -315,14 +315,20 @@ async function renderTracks() {
   for (const j of local) box.appendChild(trackRow({ id: null, client_id: j.cid, name: j.name, started_at: j.startedAt, ended_at: j.endedAt, distance_m: 0, n_points: 0, n_est: 0 }, true));
   for (const t of list) box.appendChild(trackRow(t, false));
 }
+const MODE_LABELS = { car: '차량', walk: '도보', bicycle: '자전거', other: '기타' };
+const MODE_ICONS = { car: '🚗', walk: '🚶', bicycle: '🚲', other: '📍' };
+
 function trackRow(t, localOnly) {
   const isRec = rec && t.client_id === rec.cid;
   const el = document.createElement('div'); el.className = 'trk';
   const end = t.ended_at ?? (isRec ? Date.now() : null);
+  const curMode = t.mode || 'car';
   const meta = [dateKo(t.started_at) + ' ' + hms(t.started_at).slice(0, 5) + (end ? '–' + hms(end).slice(0, 5) : ''),
     t.distance_m ? (t.distance_m / 1000).toFixed(1) + 'km' : null, end ? durKo(end - t.started_at) : null,
     t.n_points ? `${t.n_points.toLocaleString()}점` + (t.n_est ? ` (추정 ${t.n_est})` : '') : null].filter(Boolean).join(' · ');
   el.innerHTML = `<div class="trk-name"></div><div class="trk-meta">${meta}</div>
+    <div class="trk-mode">${Object.entries(MODE_LABELS).map(([k, v]) =>
+      `<button data-mode="${k}" class="${k === curMode ? 'active' : ''}">${MODE_ICONS[k]} ${v}</button>`).join('')}</div>
     <div class="trk-acts">
       <button data-a="view" ${t.id ? '' : 'disabled'}>지도</button>
       <button data-a="rename">이름 변경</button>
@@ -334,6 +340,18 @@ function trackRow(t, localOnly) {
   else if (localOnly) nm.insertAdjacentHTML('beforeend', '<span class="badge">업로드 대기</span>');
   if (t.sent_daily_at) nm.insertAdjacentHTML('beforeend', '<span class="badge sent">보냄</span>');
   el.querySelector('[data-a=view]').onclick = () => openDetail(t);
+  el.querySelectorAll('.trk-mode button').forEach(btn => {
+    btn.onclick = async () => {
+      const m = btn.dataset.mode;
+      if (m === (t.mode || 'car')) return;
+      try {
+        if (t.id) await api('PATCH', `api/tracks/${t.id}`, { mode: m });
+        t.mode = m;
+        el.querySelectorAll('.trk-mode button').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
+        toast(`${MODE_ICONS[m]} ${MODE_LABELS[m]}(으)로 변경`);
+      } catch (e) { toast('변경 실패: ' + e.message); }
+    };
+  });
   el.querySelector('[data-a=rename]').onclick = () => {
     if (el.querySelector('.rename')) return;
     const f = document.createElement('div'); f.className = 'rename';
