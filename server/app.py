@@ -49,7 +49,12 @@ def hav(a, b):
 def refresh_stats(cur, tid):
     cur.execute("SELECT lat, lon, src, ts FROM track_pt WHERE track_id=%s ORDER BY seq", (tid,))
     pts = cur.fetchall()
-    dist = sum(hav((p["lat"], p["lon"]), (q["lat"], q["lon"])) for p, q in zip(pts, pts[1:]))
+    dist = 0.0
+    for p, q in zip(pts, pts[1:]):   # 순간 이동(비행·오래 끊긴 뒤 다른 곳)은 거리에서 뺌
+        d, dt = hav((p["lat"], p["lon"]), (q["lat"], q["lon"])), (q["ts"] - p["ts"]).total_seconds()
+        if dt > 0 and d / dt > 120:
+            continue
+        dist += d
     n_est = sum(1 for p in pts if p["src"] == "imu")
     cur.execute("UPDATE track SET distance_m=%s, n_points=%s, n_est=%s WHERE id=%s", (dist, len(pts), n_est, tid))
 

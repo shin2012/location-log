@@ -116,10 +116,18 @@ export class Tracker {
     if (f.lat == null) return;
     this.setClock(f.perf, f.epoch);
     if (f.acc != null && f.acc > this.p.goodAcc) return;   // 터널 출입구의 부정확한 값 무시
-    if (this.last) {
+    let jumped = false;
+    if (this.last && !this.dr) {
+      // 순간 이동(튐)은 버림. 단, 오래 끊겼거나(비행기 등) 튄 곳 근처에서 연달아 잡히면 새 위치로 받아들임
       const dt = (f.perf - this.last.perf) / 1000, d = dist(this.last, f);
-      if (dt > 0 && d / dt > this.p.maxJump && !this.dr) return;
+      if (dt > 0 && d / dt > this.p.maxJump) {
+        const c = this.jumpCand;
+        if (dt < 120 && !(c && dist(c, f) < 100 + (f.acc ?? 30))) { this.jumpCand = { lat: f.lat, lon: f.lon }; return; }
+        jumped = true;
+      }
     }
+    this.jumpCand = null;
+    if (jumped) this.last = null;   // 새 출발점: 앞 점과 이어서 속도·방향을 계산하지 않음
     const devSpd = f.speed != null && f.speed >= 0 ? f.speed : null;
     const devHdg = f.heading != null && !Number.isNaN(f.heading) && f.heading >= 0 ? f.heading : null;
     let spd = devSpd, hdg = devHdg;
@@ -147,7 +155,7 @@ export class Tracker {
     if (this.dr) this.endDr(fix);
     this.mode = 'gps';
     this.last = fix; this.speed = spd; this.course = hdg ?? this.course;
-    this.emit({ ts: f.epoch, lat: f.lat, lon: f.lon, alt: fix.alt, acc: fix.acc, spd, hdg, src: 'gps' });
+    this.emit({ ts: f.epoch, lat: f.lat, lon: f.lon, alt: fix.alt, acc: fix.acc, spd, hdg, src: 'gps', ...(jumped ? { brk: 1 } : {}) });
   }
 
   // 주기 호출(약 4Hz): GPS 끊김 판정, 추정점 1초 간격 생성
@@ -156,6 +164,8 @@ export class Tracker {
     const gap = perf - this.last.perf;
     // 화면 꺼짐·백그라운드로 멈췄다 돌아온 경우: 추정하지 않고 대기 (몇 분을 직선으로 메우지 않도록)
     if (this.dr && perf - this.dr.posPerf > 5000) { this.dr = null; this.mode = 'hold'; return; }
+    // 멈춰 있으면 아이폰이 위치를 드문드문 줌 — 끊김이 아님
+    if (!this.dr && this.mode === 'gps' && (this.last.spd ?? 0) < this.p.minDrSpeed) return;
     if (!this.dr && gap > this.p.lossMs && this.mode === 'gps' && gap > this.p.lossMs + 2500) { this.mode = 'hold'; return; }
     if (!this.dr && gap > this.p.lossMs && this.mode === 'gps') {
       if (this.last.spd != null && this.last.spd >= this.p.minDrSpeed && this.last.hdg != null && this.yawRel != null) this.startDr(perf);

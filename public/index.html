@@ -20,7 +20,8 @@
   [hidden] { display: none !important; }
 
   /* 지도 모드 */
-  #map { position: fixed; inset: 0; background: #1b2230; }
+  #mapWrap { position: fixed; inset: 0; background: #1b2230; }
+  #mapWrap > #map { position: absolute !important; inset: 0; }
   #overlay { position: fixed; left: 10px; right: 10px; top: calc(var(--safe-t) + 10px); z-index: 10; pointer-events: none;
     background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 10px 6px 8px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
   .ov-row { display: grid; grid-template-columns: 1fr 1fr 1.2fr; }
@@ -86,7 +87,8 @@
 
   /* 경로 보기 */
   #detail { position: fixed; inset: 0; z-index: 60; background: var(--bg); display: flex; flex-direction: column; }
-  #detailMap { flex: 1; }
+  #detailWrap { flex: 1; position: relative; min-height: 0; }
+  #detailWrap > #detailMap { position: absolute !important; inset: 0; }
   #detailInfo { padding: 10px 16px calc(var(--safe-b) + 14px); font-size: 13px; color: var(--dim); border-top: 1px solid var(--line); }
   #toast { position: fixed; left: 50%; top: calc(var(--safe-t) + 150px); transform: translateX(-50%); z-index: 80; background: #111827f2; border: 1px solid var(--line);
     padding: 10px 16px; border-radius: 12px; font-size: 14px; max-width: 90vw; text-align: center; }
@@ -95,7 +97,7 @@
 <body>
 <!-- 지도 모드 -->
 <section id="mapMode">
-  <div id="map"></div>
+  <div id="mapWrap"><div id="map"></div></div>
   <div id="overlay">
     <div class="ov-row">
       <div class="ov-cell"><div class="ov-lbl">속도</div><div class="ov-val" id="ovSpeed">–<small>km/h</small></div></div>
@@ -131,12 +133,12 @@
 
 <section id="detail" hidden>
   <div class="s-head"><h2 id="detailTitle">경로</h2><button class="x" id="btnDetailClose" aria-label="닫기">✕</button></div>
-  <div id="detailMap"></div>
+  <div id="detailWrap"><div id="detailMap"></div></div>
   <div id="detailInfo"></div>
 </section>
 
 <div id="toast" hidden></div>
 
-<script type="module" src="app.js?v=4"></script>
+<script type="module" src="app.js?v=7"></script>
 </body>
 </html>

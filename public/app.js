@@ -1,6 +1,6 @@
 // 위치 기록 앱 — 지도 모드 / 기록 모드 / 설정
-import { Tracker, dirName } from './track.js?v=3';
-import { createMap } from './mapkit.js?v=4';
+import { Tracker, dirName } from './track.js?v=5';
+import { createMap, inKR } from './mapkit.js?v=5';
 
 const $ = (id) => document.getElementById(id);
 const pad = (n) => String(n).padStart(2, '0');
@@ -136,22 +136,31 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 const cfg = await api('GET', 'api/config').catch(() => ({}));
 const map = await createMap($('map'), { naverKey: cfg.naver_map_key, zoom: 16 });
 const me = map.marker();
-let follow = true, centered = false, lines = [];
+let follow = true, centered = false, lines = [], lastKR = null;
 map.onDrag(() => { follow = false; $('btnFollow').classList.remove('on'); });
 $('btnFollow').addEventListener('click', () => { follow = true; $('btnFollow').classList.add('on'); if (live) map.pan(live.lat, live.lon); });
 function updateMe(lat, lon) {
   const p = live ?? (lat != null ? { lat, lon } : null); if (!p) return;
   const hdg = live?.hdg ?? tracker.compassHeading ?? null;
+  const kr = inKR(p);
+  if (kr !== lastKR) { lastKR = kr; map.ensure([p]); }   // 해외로 나가면 Leaflet, 돌아오면 네이버
   me.set(p.lat, p.lon, hdg);
   if (!centered) { map.center(p.lat, p.lon, 16); centered = true; } else if (follow && mode === 'map') map.pan(p.lat, p.lon);
 }
 const COLOR = { gps: '#2563eb', imu: '#f59e0b' };
+// 순간 이동(비행·오래 끊김 뒤 다른 곳): 선을 잇지 않음
+const isBreak = (q, p) => p.brk || (q && p.ts - q.ts > 0 && haversine(q, p) / ((p.ts - q.ts) / 1000) > 120);
+function haversine(a, b) {
+  const R = 6371008.8, r = Math.PI / 180, x = Math.sin((b.lat - a.lat) * r / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin((b.lon - a.lon) * r / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(x));
+}
 function segments(pts) {   // 같은 출처끼리 묶고, 경계 점은 양쪽에 공유
   const segs = [];
   for (const p of pts) {
-    const s = segs.at(-1);
-    if (s && s.src === p.src) s.pts.push(p);
-    else segs.push({ src: p.src, pts: s ? [s.pts.at(-1), p] : [p] });
+    const s = segs.at(-1), q = s?.pts.at(-1);
+    if (s && isBreak(q, p)) segs.push({ src: p.src, pts: [p] });
+    else if (s && s.src === p.src) s.pts.push(p);
+    else segs.push({ src: p.src, pts: s ? [q, p] : [p] });
   }
   return segs;
 }
@@ -160,10 +169,10 @@ function redrawLines() {
   for (const s of segments(curPts)) { const line = map.line({ color: COLOR[s.src], dashed: s.src === 'imu' }); line.set(s.pts); lines.push({ ...s, line }); }
 }
 function drawAppend(p) {
-  const s = lines.at(-1);
-  if (s && s.src === p.src) { s.pts.push(p); s.line.set(s.pts); return; }
+  const s = lines.at(-1), brk = s && isBreak(s.pts.at(-1), p);
+  if (s && !brk && s.src === p.src) { s.pts.push(p); s.line.set(s.pts); return; }
   const line = map.line({ color: COLOR[p.src], dashed: p.src === 'imu' });
-  const pts = s ? [s.pts.at(-1), p] : [p]; line.set(pts); lines.push({ src: p.src, pts, line });
+  const pts = s && !brk ? [s.pts.at(-1), p] : [p]; line.set(pts); lines.push({ src: p.src, pts, line });
 }
 
 // ---------- 기록 모드 목록 ----------
@@ -222,7 +231,7 @@ $('btnRec').addEventListener('click', () => (rec ? stopRec() : startRec()));
 
 // ---------- 서버 동기화 ----------
 let syncing = false, syncErr = null;
-const slim = (p) => ({ seq: p.seq, ts: p.ts, lat: p.lat, lon: p.lon, alt: p.alt ?? null, acc: p.acc ?? null, spd: p.spd ?? null, hdg: p.hdg ?? null, src: p.src });
+const slim = (p) => ({ seq: p.seq, ts: p.ts, lat: p.lat, lon: p.lon, brk: p.brk ? 1 : undefined, alt: p.alt ?? null, acc: p.acc ?? null, spd: p.spd ?? null, hdg: p.hdg ?? null, src: p.src });
 async function sync() {
   if (syncing) return; syncing = true;
   try {
@@ -348,7 +357,7 @@ async function openDetail(t) {
   try {
     const d = await api('GET', `api/tracks/${t.id}`);
     dmap?.destroy(); $('detailMap').innerHTML = '';
-    dmap = await createMap($('detailMap'), { naverKey: cfg.naver_map_key, lat: d.points[0]?.lat, lon: d.points[0]?.lon, zoom: 14 });
+    dmap = await createMap($('detailMap'), { naverKey: cfg.naver_map_key, lat: d.points[0]?.lat, lon: d.points[0]?.lon, zoom: 14, pts: d.points });
     for (const s of segments(d.points)) dmap.line({ color: COLOR[s.src], dashed: s.src === 'imu' }).set(s.pts);
     if (d.points.length) setTimeout(() => dmap.fit(d.points), 50);
     const end = d.ended_at ?? d.points.at(-1)?.ts ?? d.started_at;

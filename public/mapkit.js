@@ -27,6 +27,9 @@ function loadLeaflet() {
   return leafletLoading;
 }
 
+// 한국 안(대마도·규슈 제외)이면 네이버, 해외면 Leaflet
+export const inKR = (p) => p.lat >= 33 && p.lat <= 38.7 && p.lon >= 124.5 && p.lon <= 132 && !(p.lon > 129.15 && p.lat < 34.9);
+
 const arrowHtml = (hdg) => `<div class="me"><div class="me-dot"></div>${hdg == null ? '' : `<div class="me-arrow" style="transform:rotate(${hdg}deg)"></div>`}</div>`;
 
 // ---------- 엔진별 구현 ----------
@@ -95,7 +98,7 @@ function leafletEngine(el, c) {
 }
 
 // ---------- 공개 API: 엔진이 바뀌어도(인증 실패 → Leaflet) 선·표시를 다시 그려주는 래퍼 ----------
-export async function createMap(el, { lat = 37.5665, lon = 126.978, zoom = 16, naverKey = '' } = {}) {
+export async function createMap(el, { lat = 37.5665, lon = 126.978, zoom = 16, naverKey = '', pts = null } = {}) {
   const lines = new Set(), markers = new Set(), dragFns = [];
   let eng = null, view = { lat, lon, zoom };
   const build = (kind) => {
@@ -107,6 +110,7 @@ export async function createMap(el, { lat = 37.5665, lon = 126.978, zoom = 16, n
     api.kind = eng.kind;
   };
   const toLeaflet = async () => { await loadLeaflet(); build('leaflet'); };
+  const toNaver = async () => { try { await loadNaver(naverKey); if (!window.naverAuthFailed) build('naver'); } catch {} };
   const api = {
     kind: null,
     center(lat, lon, zoom) { view = { lat, lon, zoom: zoom ?? view.zoom }; eng.center(lat, lon, zoom); },
@@ -122,8 +126,15 @@ export async function createMap(el, { lat = 37.5665, lon = 126.978, zoom = 16, n
     },
     onDrag(fn) { dragFns.push(fn); eng.onDrag(fn); },
     destroy() { eng?.destroy(); },
+    // 지금 보여줄 위치들에 맞춰 엔진 선택: 하나라도 해외면 Leaflet, 모두 한국이면 네이버
+    async ensure(points) {
+      const abroad = points.some(p => !inKR(p));
+      if (abroad && api.kind === 'naver') { view = { ...view, lat: points[0].lat, lon: points[0].lon }; await toLeaflet(); }
+      else if (!abroad && api.kind === 'leaflet' && naverKey && !window.naverAuthFailed) { view = { ...view, lat: points[0].lat, lon: points[0].lon }; await toNaver(); }
+    },
   };
   api.toLeaflet = toLeaflet;
+  if (pts && pts.length && pts.some(p => !inKR(p))) { await toLeaflet(); return api; }
   try {
     await loadNaver(naverKey);
     (window.__mkFail ||= new Set()).add(() => { if (api.kind === 'naver') toLeaflet(); });
