@@ -68,6 +68,7 @@ function onPoint(pt) {
   const seq = rec.nextSeq++; seqMap.set(pt.seq, seq); persist();
   const p = { ...pt, seq, cid: rec.cid, synced: 0, ver: ver() };
   const prev = curPts.at(-1);
+  if (prev && !isBreak(prev, p)) recDist += haversine(prev, p);
   putPts([p]);
   curIdx.set(seq, curPts.length); curPts.push(p);
   drawAppend(p); logAppend(p, prev);
@@ -82,7 +83,7 @@ function onCorrect(list, info) {
     ups.push(p); const i = curIdx.get(s); if (i != null) curPts[i] = p;
   }
   if (!ups.length) return;
-  putPts(ups); redrawLines(); logReset();   // 기록 화면의 추정 줄도 보정된 좌표로
+  putPts(ups); calcDist(); redrawLines(); logReset();   // 기록 화면의 추정 줄도 보정된 좌표로
   toast(`GPS 끊김 ${Math.round(info.gapS)}초 구간을 다시 잡힌 위치에 맞춰 보정했습니다 (차이 ${Math.round(info.errM)}m)`, 4000);
 }
 setInterval(() => tracker.tick(performance.now()), 250);
@@ -180,13 +181,18 @@ const logList = $('logList');
 function logLine(p, prev) {
   const frag = document.createDocumentFragment();
   if (prev && p.ts - prev.ts > 20000) {
-    const g = document.createElement('div'); g.className = 'ln'; g.style.color = '#64748b';
-    g.textContent = `— ${durKo(p.ts - prev.ts)} 동안 기록 없음 —`; frag.appendChild(g);
+    const g = document.createElement('div'); g.className = 'gap';
+    g.textContent = `${durKo(p.ts - prev.ts)} 동안 기록 없음`; frag.appendChild(g);
   }
   const d = document.createElement('div'); d.className = 'ln' + (p.src === 'imu' ? ' est-ln' : '');
-  d.innerHTML = `<span class="t">${hms(p.ts)}</span><span class="c">${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}</span>` + (p.src === 'imu' ? '<span class="est">추정</span>' : '');
+  const spd = p.spd == null ? '–' : Math.round(p.spd * 3.6);
+  d.innerHTML = `<span class="t">${hms(p.ts)}</span><span class="c">${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}${p.src === 'imu' ? '<span class="tag est">추정</span>' : ''}</span>`
+    + `<span class="s">${spd}<small>km/h</small></span>`;
   frag.appendChild(d); return frag;
 }
+// 기록 거리 (순간 이동 구간 제외)
+let recDist = 0;
+function calcDist() { recDist = 0; for (let i = 1; i < curPts.length; i++) if (!isBreak(curPts[i - 1], curPts[i])) recDist += haversine(curPts[i - 1], curPts[i]); }
 function logAppend(p, prev) {
   const stick = logList.scrollHeight - logList.scrollTop - logList.clientHeight < 60;
   logList.appendChild(logLine(p, prev));
@@ -216,7 +222,7 @@ async function startRec() {
   await requestSensors();
   const now = Date.now();
   rec = { cid: crypto.randomUUID?.() ?? `${now}-${Math.random().toString(36).slice(2)}`, name: defaultName(now), startedAt: now, nextSeq: 0, serverId: null };
-  persist(); seqMap.clear(); setCur([]); redrawLines(); logReset();
+  persist(); seqMap.clear(); setCur([]); recDist = 0; redrawLines(); logReset();
   keepAwake(true); render(); sync();
   // 방금 받은 GPS가 있으면 첫 점으로 사용
   if (live && tracker.mode === 'gps' && performance.now() - lastFixAt < 3000) onPoint({ ...live, seq: -1, ts: Date.now() });
@@ -257,7 +263,7 @@ setInterval(sync, 5000);
 // ---------- 화면 갱신 ----------
 function render() {
   const b = $('btnRec'); b.classList.toggle('on', !!rec); b.textContent = rec ? '■ 기록 종료' : '● 기록 시작';
-  $('logIdle').hidden = !!rec; logList.hidden = !rec;
+  $('logIdle').hidden = !!rec; logList.hidden = !rec; $('logHead').hidden = !rec; $('logCols').hidden = !rec;
 }
 function tickUI() {
   const now = performance.now();
@@ -265,7 +271,12 @@ function tickUI() {
   $('ovSpeed').innerHTML = `${spd == null ? '–' : Math.round(spd * 3.6)}<small>km/h</small>`;
   const moving = spd != null && spd > 1.5;
   const hdg = tracker.mode === 'dr' ? tracker.course : moving && live?.hdg != null ? live.hdg : tracker.compassHeading;
-  $('ovDir').textContent = hdg == null ? '–' : `${dirName(hdg)} ${Math.round(hdg)}°`;
+  $('ovDir').textContent = hdg == null ? '–' : dirName(hdg);
+  $('dirBox').classList.toggle('g-off', hdg == null);
+  if (hdg != null) {   // 359°→0°에서 바늘이 한 바퀴 돌지 않게 누적 각도로
+    needleDeg += ((hdg - needleDeg) % 360 + 540) % 360 - 180;
+    $('dirNeedle').style.transform = `rotate(${needleDeg}deg)`;
+  }
   $('ovTime').textContent = rec ? dur(Date.now() - rec.startedAt) : '대기';
   let st;
   if (gpsErr) st = `<span class="est">${gpsErr}</span>`;
@@ -276,9 +287,17 @@ function tickUI() {
   if (rec) st += ` · ${curPts.length.toLocaleString()}점`;
   if (syncErr) st += ` · <span class="est">업로드 대기</span>`;
   $('ovStatus').innerHTML = st;
+  if (rec) {
+    $('lhTime').textContent = dur(Date.now() - rec.startedAt);
+    $('lhDist').textContent = (recDist / 1000).toFixed(recDist < 10000 ? 2 : 1);
+    $('lhSpd').textContent = spd == null ? '–' : Math.round(spd * 3.6);
+    $('lhPts').textContent = curPts.length.toLocaleString();
+    $('lhStatus').innerHTML = st.replace(/ · [\d,]+점/, '');
+  }
   const sensorsStale = !sensorsOn || now - lastSensorAt > 3000;
   $('sensorBanner').hidden = !(rec && sensorsStale && needsPermission);
 }
+let needleDeg = 0;
 setInterval(tickUI, 500);
 
 // ---------- 설정 ----------
@@ -369,7 +388,7 @@ $('btnDetailClose').addEventListener('click', () => { $('detail').hidden = true;
 
 // ---------- 시작 ----------
 if (rec) {   // 새로고침·앱 재실행: 기록 이어가기
-  setCur(await getPts(rec.cid)); redrawLines(); logReset(); keepAwake(true);
+  setCur(await getPts(rec.cid)); calcDist(); redrawLines(); logReset(); keepAwake(true);
   if (curPts.length) { const l = curPts.at(-1); map.center(l.lat, l.lon, 16); centered = true; }
 }
 setMode(mode); render(); tickUI(); sync(); startGps();
