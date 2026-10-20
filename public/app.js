@@ -298,7 +298,7 @@ function trackRow(t, localOnly) {
     <div class="trk-acts">
       <button data-a="view" ${t.id ? '' : 'disabled'}>지도</button>
       <button data-a="rename">이름 변경</button>
-      <button data-a="daily" ${t.id && cfg.daily_ready && !isRec ? '' : 'disabled'}>데일리요섭 보내기</button>
+      <button data-a="daily" ${t.id && !isRec ? '' : 'disabled'}>${t.sent_daily_at ? '데일리요섭 보내기 취소' : '데일리요섭 보내기'}</button>
       <button data-a="del" class="del" ${isRec ? 'disabled' : ''}>삭제</button>
     </div>`;
   const nm = el.querySelector('.trk-name'); nm.textContent = t.name;
@@ -324,10 +324,12 @@ function trackRow(t, localOnly) {
     el.appendChild(f); inp.focus(); inp.select();
   };
   el.querySelector('[data-a=daily]').onclick = async () => {
-    try { await api('POST', `api/tracks/${t.id}/send-daily`); toast('데일리요섭으로 보냈습니다'); renderTracks(); }
-    catch (e) { toast('보내기 실패: ' + e.message); }
+    try {
+      if (t.sent_daily_at) { await api('DELETE', `api/tracks/${t.id}/send-daily`); toast('데일리요섭에서 뺐습니다'); }
+      else { await api('POST', `api/tracks/${t.id}/send-daily`); toast('데일리요섭으로 보냈습니다. 그날 지도에 실제 경로로 나옵니다'); }
+      renderTracks();
+    } catch (e) { toast('실패: ' + e.message); }
   };
-  if (!cfg.daily_ready) el.querySelector('[data-a=daily]').title = '데일리요섭 연동 준비 중';
   el.querySelector('[data-a=del]').onclick = async () => {
     if (!confirm(`"${t.name}" 기록을 삭제할까요?\n되돌릴 수 없습니다.`)) return;
     try {

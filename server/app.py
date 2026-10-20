@@ -71,7 +71,7 @@ def health():
 @app.get("/api/config")
 def config():
     return {"naver_map_key": os.environ.get("NCP_MAPS_KEY_ID", ""),
-            "daily_ready": os.environ.get("DAILY_READY", "") == "1"}
+            "daily_ready": True}
 
 
 class TrackIn(BaseModel):
@@ -172,12 +172,28 @@ def delete_track(tid: int):
     return {"ok": True}
 
 
+# 데일리요섭 보내기 = 보냄 표시만. 데일리요섭은 이 DB에서 보냄 표시된 기록만 읽음(복사 없음)
+# → 삭제·이름 변경·보내기 취소가 데일리요섭에 바로 반영됨
 @app.post("/api/tracks/{tid}/send-daily")
 def send_daily(tid: int):
-    # 데일리요섭 쪽 데이터 우선순위 확정 전까지 비활성
-    if os.environ.get("DAILY_READY", "") != "1":
-        raise HTTPException(503, "데일리요섭 연동 준비 중")
-    raise HTTPException(501, "미구현")
+    with db() as cur:
+        n = cur.execute("UPDATE track SET sent_daily_at=NOW() WHERE id=%s", (tid,))
+        cur.execute("SELECT * FROM track WHERE id=%s", (tid,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "없는 기록")
+        return track_row(r)
+
+
+@app.delete("/api/tracks/{tid}/send-daily")
+def unsend_daily(tid: int):
+    with db() as cur:
+        cur.execute("UPDATE track SET sent_daily_at=NULL WHERE id=%s", (tid,))
+        cur.execute("SELECT * FROM track WHERE id=%s", (tid,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "없는 기록")
+        return track_row(r)
 
 
 # 센서 원본 녹화 (알고리즘 조정용, /lab)
