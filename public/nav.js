@@ -39,7 +39,7 @@ export function rotate(q, x, y, z, out) {
 }
 
 // 2차 버터워스 저역 통과 (축별)
-class LP2 {
+export class LP2 {
   constructor() { this.fs = 0; this.fc = 0; this.s = [[0, 0], [0, 0], [0, 0]]; this.init = false; }
   design(fc, fs) {
     if (Math.abs(fc - this.fc) < 1e-9 && Math.abs(fs - this.fs) < 0.5) return;

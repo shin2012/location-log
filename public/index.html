@@ -4,621 +4,139 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="위치 기록">
 <meta name="theme-color" content="#0b0d12">
-<title>IMU 뷰어</title>
+<link rel="manifest" href="manifest.webmanifest">
+<title>위치 기록</title>
 <style>
-  :root { color-scheme: dark; }
+  :root { color-scheme: dark; --bg: #0b0d12; --card: #12161ee6; --line: #ffffff1f; --dim: #94a3b8; --rec: #ef4444; --est: #f59e0b; --ok: #22c55e;
+    --safe-t: env(safe-area-inset-top); --safe-b: env(safe-area-inset-bottom); }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { margin: 0; height: 100%; background: #0b0d12; color: #e8ecf3;
-    font-family: -apple-system, "Pretendard", system-ui, sans-serif; overflow: hidden;
-    -webkit-user-select: none; user-select: none; touch-action: none; }
-  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
-  .hud { position: fixed; left: 0; right: 0; top: 0; padding: calc(env(safe-area-inset-top) + 10px) 14px 10px;
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; pointer-events: none;
-    background: linear-gradient(#0b0d12ee, #0b0d1200); }
-  .card { background: #ffffff10; border: 1px solid #ffffff18; border-radius: 12px; padding: 7px 9px; }
-  .lbl { font-size: 11px; color: #9aa4b2; }
-  .val { font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .sub { font-size: 11px; color: #9aa4b2; font-variant-numeric: tabular-nums; line-height: 1.45; }
-  .wide { grid-column: 1 / -1; }
-  .bar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; gap: 6px; justify-content: center; flex-wrap: wrap;
-    padding: 10px 10px calc(env(safe-area-inset-bottom) + 12px); }
-  button { appearance: none; border: 0; border-radius: 12px; padding: 11px 12px; font-size: 14px; font-weight: 600;
-    color: #fff; background: #ffffff1c; touch-action: manipulation; }
-  button.on { background: #3b82f6; }
-  button.mode { background: #7c3aed; }
-  #still { display: inline-block; padding: 1px 7px; border-radius: 8px; font-weight: 700; }
-  #start { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 16px; background: #0b0d12f2; text-align: center; padding: 24px; z-index: 10; }
-  #start h1 { margin: 0; font-size: 26px; }
-  #start p { margin: 0; color: #9aa4b2; font-size: 15px; line-height: 1.6; }
-  #start button { background: #3b82f6; font-size: 18px; padding: 16px 28px; }
-  #err { color: #f87171; font-size: 14px; min-height: 1em; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: #e8ecf3; overflow: hidden;
+    font-family: -apple-system, "Pretendard", system-ui, sans-serif; -webkit-user-select: none; user-select: none; }
+  button { appearance: none; border: 0; font: inherit; color: inherit; background: none; touch-action: manipulation; cursor: pointer; }
   [hidden] { display: none !important; }
-  #more { position: fixed; right: 10px; bottom: calc(env(safe-area-inset-bottom) + 70px); display: flex; flex-direction: column; gap: 6px;
-    background: #111827f0; border: 1px solid #ffffff22; border-radius: 14px; padding: 8px; z-index: 5; }
-  #btnCar.on { background: #ea580c; }
-  #btnGps.on { background: #059669; }
-  #btnLog.on { background: #dc2626; }
-  .hint { color: #fb923c; font-weight: 700; }
+
+  /* 지도 모드 */
+  #map { position: fixed; inset: 0; background: #1b2230; }
+  #overlay { position: fixed; left: 10px; right: 10px; top: calc(var(--safe-t) + 10px); z-index: 10; pointer-events: none;
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 10px 6px 8px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+  .ov-row { display: grid; grid-template-columns: 1fr 1fr 1.2fr; }
+  .ov-cell { text-align: center; }
+  .ov-cell + .ov-cell { border-left: 1px solid var(--line); }
+  .ov-lbl { font-size: 11px; color: var(--dim); }
+  .ov-val { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; line-height: 1.15; white-space: nowrap; }
+  .ov-val small { font-size: 12px; font-weight: 600; color: var(--dim); margin-left: 2px; }
+  #ovStatus { text-align: center; font-size: 12px; color: var(--dim); margin-top: 6px; font-variant-numeric: tabular-nums; }
+  #ovStatus .est { color: var(--est); font-weight: 700; }
+  #ovStatus .ok { color: var(--ok); font-weight: 700; }
+  #btnFollow { position: fixed; right: 12px; z-index: 10; width: 44px; height: 44px; border-radius: 22px; background: var(--card); border: 1px solid var(--line);
+    font-size: 20px; top: calc(var(--safe-t) + 132px); }
+  #btnFollow.on { color: #60a5fa; }
+  .me { position: relative; width: 40px; height: 40px; }
+  .me-dot { position: absolute; left: 12px; top: 12px; width: 16px; height: 16px; border-radius: 8px; background: #3b82f6; border: 3px solid #fff; box-shadow: 0 0 0 6px #3b82f633; }
+  .me-arrow { position: absolute; left: 0; top: 0; width: 40px; height: 40px; }
+  .me-arrow::before { content: ""; position: absolute; left: 14px; top: -3px; border: 6px solid transparent; border-bottom: 10px solid #3b82f6; }
+
+  /* 기록 모드 */
+  #log { position: fixed; inset: 0; background: #05070a; padding: calc(var(--safe-t) + 12px) 0 calc(var(--safe-b) + 110px); }
+  #logList { height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 16px;
+    font: 15px/1.7 ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; user-select: text; -webkit-user-select: text; }
+  #logList .ln { white-space: nowrap; }
+  #logList .t { color: var(--dim); margin-right: 10px; }
+  #logList .est { color: var(--est); font-size: 12px; margin-left: 8px; font-family: -apple-system, sans-serif; }
+  #logList .ln.est-ln .c { color: #fcd34d; }
+  #logIdle { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: 17px; }
+
+  /* 하단 */
+  #bottom { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 18px calc(var(--safe-b) + 18px); pointer-events: none; }
+  #bottom > * { pointer-events: auto; }
+  .small { width: 46px; height: 46px; border-radius: 23px; background: var(--card); border: 1px solid var(--line); font-size: 20px;
+    display: flex; align-items: center; justify-content: center; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+  #btnRec { min-width: 172px; height: 64px; border-radius: 32px; font-size: 19px; font-weight: 700; background: #2563eb; box-shadow: 0 6px 20px #0008; }
+  #btnRec.on { background: var(--rec); }
+  #sensorBanner { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--safe-b) + 96px); z-index: 21; background: #78350f;
+    color: #fde68a; border-radius: 12px; padding: 9px 14px; font-size: 14px; font-weight: 600; white-space: nowrap; }
+
+  /* 설정 */
+  #settings { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: flex; flex-direction: column; }
+  .s-head { display: flex; align-items: center; justify-content: space-between; padding: calc(var(--safe-t) + 10px) 16px 10px; border-bottom: 1px solid var(--line); }
+  .s-head h2 { margin: 0; font-size: 19px; }
+  .s-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 6px 16px calc(var(--safe-b) + 24px); }
+  .s-sec { color: var(--dim); font-size: 13px; margin: 18px 0 6px; }
+  .trk { border-bottom: 1px solid var(--line); padding: 12px 0; }
+  .trk-name { font-size: 16px; font-weight: 600; word-break: break-all; }
+  .trk-meta { font-size: 13px; color: var(--dim); margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .trk-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .trk-acts button { font-size: 13px; padding: 6px 10px; border-radius: 9px; background: #ffffff14; }
+  .trk-acts button.del { color: #fca5a5; }
+  .trk-acts button:disabled { opacity: .45; }
+  .badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 6px; margin-left: 6px; vertical-align: 2px; background: #ffffff14; color: var(--dim); font-weight: 600; }
+  .badge.rec { background: #ef444433; color: #fca5a5; }
+  .badge.sent { background: #22c55e2a; color: #86efac; }
+  .s-empty { color: var(--dim); padding: 24px 0; text-align: center; }
+  .s-link { display: block; color: var(--dim); font-size: 13px; padding: 14px 0; text-decoration: none; }
+  .x { font-size: 22px; width: 40px; height: 40px; }
+  .rename { display: flex; gap: 6px; margin-top: 8px; }
+  .rename input { flex: 1; font-size: 16px; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line); background: #0f141c; color: inherit; min-width: 0; }
+  .rename button { padding: 8px 12px; border-radius: 9px; background: #2563eb; font-size: 14px; font-weight: 600; }
+
+  /* 경로 보기 */
+  #detail { position: fixed; inset: 0; z-index: 60; background: var(--bg); display: flex; flex-direction: column; }
+  #detailMap { flex: 1; }
+  #detailInfo { padding: 10px 16px calc(var(--safe-b) + 14px); font-size: 13px; color: var(--dim); border-top: 1px solid var(--line); }
+  #toast { position: fixed; left: 50%; top: calc(var(--safe-t) + 150px); transform: translateX(-50%); z-index: 80; background: #111827f2; border: 1px solid var(--line);
+    padding: 10px 16px; border-radius: 12px; font-size: 14px; max-width: 90vw; text-align: center; }
 </style>
 </head>
 <body>
-<canvas id="c"></canvas>
+<!-- 지도 모드 -->
+<section id="mapMode">
+  <div id="map"></div>
+  <div id="overlay">
+    <div class="ov-row">
+      <div class="ov-cell"><div class="ov-lbl">속도</div><div class="ov-val" id="ovSpeed">–<small>km/h</small></div></div>
+      <div class="ov-cell"><div class="ov-lbl">방향</div><div class="ov-val" id="ovDir">–</div></div>
+      <div class="ov-cell"><div class="ov-lbl">기록 시간</div><div class="ov-val" id="ovTime">–</div></div>
+    </div>
+    <div id="ovStatus">위치 확인 중…</div>
+  </div>
+  <button id="btnFollow" class="on" aria-label="내 위치 따라가기">◎</button>
+</section>
 
-<!-- 자세 모드 -->
-<div class="hud" id="hudA">
-  <div class="card"><div class="lbl">앞뒤 기울기</div><div class="val" id="pitch">–</div></div>
-  <div class="card"><div class="lbl">좌우 기울기</div><div class="val" id="roll">–</div></div>
-  <div class="card"><div class="lbl">방향</div><div class="val" id="yaw">–</div></div>
-  <div class="card wide"><div class="sub" id="rawtxt">센서 대기 중</div></div>
+<!-- 기록 모드 -->
+<section id="logMode" hidden>
+  <div id="log"><div id="logList"></div><div id="logIdle">기록 중이 아닙니다</div></div>
+</section>
+
+<div id="bottom">
+  <button class="small" id="btnMode" aria-label="화면 전환">📝</button>
+  <button id="btnRec">● 기록 시작</button>
+  <button class="small" id="btnSet" aria-label="설정">⚙</button>
 </div>
-<div class="bar" id="barA">
-  <button class="mode" data-mode>궤적 모드 ▸</button>
-  <button id="btnZero">정면 맞추기</button>
-  <button id="btnVec" class="on">가속도 화살표</button>
-  <button id="btnView">시점 전환</button>
-</div>
+<button id="sensorBanner" hidden>터널 보정용 센서 켜기</button>
 
-<!-- 궤적 모드 -->
-<div class="hud" id="hudT" hidden>
-  <div class="card"><div class="lbl">이동 거리</div><div class="val" id="tDist">0.00 m</div></div>
-  <div class="card"><div class="lbl">원점에서</div><div class="val" id="tDisp">0.00 m</div></div>
-  <div class="card"><div class="lbl">속도</div><div class="val" id="tSpd">0.00</div></div>
-  <div class="card wide"><div class="sub" id="ttxt">원점 초기화 후 폰을 잠시 가만히 두었다가 움직이세요.</div></div>
-</div>
-<div class="bar" id="barT" hidden>
-  <button class="mode" data-mode>◂ 자세 모드</button>
-  <button id="btnReset">원점 초기화</button>
-  <button id="btnCar">🚗 차량</button>
-  <button id="btnGps">🛰 GPS·나침반</button>
-  <button id="btnGrav">⬇ 중력 정렬</button>
-  <button id="btnMore">⋯</button>
-</div>
-<div id="more" hidden>
-  <button id="btnRec" class="on">기록 중</button>
-  <button id="btnFix" class="on">정지 보정</button>
-  <button id="btnLevel" class="on">수평 유지</button>
-  <button id="btnFollow">따라가기</button>
-  <button id="btnLog">● 센서 녹화</button>
-</div>
+<!-- 설정 -->
+<section id="settings" hidden>
+  <div class="s-head"><h2>설정</h2><button class="x" id="btnSetClose" aria-label="닫기">✕</button></div>
+  <div class="s-body">
+    <div class="s-sec">저장된 기록</div>
+    <div id="trkList"><div class="s-empty">불러오는 중…</div></div>
+    <a class="s-link" href="lab/">센서 실험실 (3D 자세·궤적) ›</a>
+  </div>
+</section>
 
-<div id="start">
-  <h1>📱 IMU 뷰어</h1>
-  <p>아이폰의 자이로·가속도 센서로<br>자세와 이동 궤적을 3D로 표시합니다.<br><br>
-  화면 회전 잠금을 켜고 시작하세요.</p>
-  <button id="btnStart">센서 사용 시작</button>
-  <div id="err"></div>
-</div>
+<section id="detail" hidden>
+  <div class="s-head"><h2 id="detailTitle">경로</h2><button class="x" id="btnDetailClose" aria-label="닫기">✕</button></div>
+  <div id="detailMap"></div>
+  <div id="detailInfo"></div>
+</section>
 
-<script type="importmap">
-{ "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
-} }
-</script>
-<script type="module">
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { Nav, PRESETS } from './nav.js?v=3';
-import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
-import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
-import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+<div id="toast" hidden></div>
 
-const $ = (id) => document.getElementById(id);
-const deg = THREE.MathUtils.DEG2RAD;
-const canvas = $('c');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 3));
-
-function addLights(s) {
-  s.background = new THREE.Color(0x0b0d12);
-  s.add(new THREE.HemisphereLight(0xffffff, 0x334155, 1.6));
-  const sun = new THREE.DirectionalLight(0xffffff, 2.2); sun.position.set(2, 4, 3); s.add(sun);
-}
-function textTexture(text, color, size = 72, w = 128, h = 128) {
-  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
-  const g = cv.getContext('2d');
-  g.fillStyle = color; g.font = `bold ${size}px -apple-system, sans-serif`;
-  g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, w / 2, h / 2 + 4);
-  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t;
-}
-function sprite(text, color, scale, size = 64) {
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: textTexture(text, color, size, 256, 128), depthTest: false, transparent: true }));
-  s.scale.set(scale * 2, scale, 1); s.renderOrder = 5; return s;
-}
-
-// ---------- 아이폰 모델 (기기 좌표: X=오른쪽, Y=화면 위쪽, Z=화면 밖) ----------
-const W = 0.716, H = 1.476, D = 0.083, R = 0.11;   // 아이폰 16 Pro 크기 (단위 0.1m)
-function roundedRect(w, h, r) {
-  const s = new THREE.Shape(), x = -w / 2, y = -h / 2;
-  s.moveTo(x + r, y); s.lineTo(x + w - r, y); s.quadraticCurveTo(x + w, y, x + w, y + r);
-  s.lineTo(x + w, y + h - r); s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  s.lineTo(x + r, y + h); s.quadraticCurveTo(x, y + h, x, y + h - r);
-  s.lineTo(x, y + r); s.quadraticCurveTo(x, y, x + r, y); return s;
-}
-const screenTex = (() => {
-  const sc = document.createElement('canvas'); sc.width = 512; sc.height = 1056;
-  const sg = sc.getContext('2d');
-  const grad = sg.createLinearGradient(0, 0, 512, 1056);
-  grad.addColorStop(0, '#1e3a8a'); grad.addColorStop(1, '#7c3aed');
-  sg.fillStyle = grad; sg.fillRect(0, 0, 512, 1056);
-  sg.fillStyle = '#000'; sg.beginPath(); sg.roundRect(176, 30, 160, 46, 23); sg.fill();
-  sg.fillStyle = '#ffffffdd'; sg.font = 'bold 120px -apple-system, sans-serif'; sg.textAlign = 'center';
-  sg.fillText('▲', 256, 330); sg.font = 'bold 64px -apple-system, sans-serif'; sg.fillText('위', 256, 430);
-  sg.font = '600 44px -apple-system, sans-serif'; sg.fillStyle = '#ffffffaa'; sg.fillText('IMU', 256, 640);
-  sg.fillStyle = '#ffffff99'; sg.beginPath(); sg.roundRect(176, 1010, 160, 10, 5); sg.fill();
-  const t = new THREE.CanvasTexture(sc); t.colorSpace = THREE.SRGBColorSpace; return t;
-})();
-const bodyMat = new THREE.MeshStandardMaterial({ color: 0x8a8378, metalness: 0.85, roughness: 0.35 });
-const screenMat = new THREE.MeshStandardMaterial({ map: screenTex, roughness: 0.15, metalness: 0.1, emissive: 0x111122 });
-const bumpMat = new THREE.MeshStandardMaterial({ color: 0x6f695f, metalness: 0.7, roughness: 0.4 });
-const lensMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, metalness: 0.9, roughness: 0.1 });
-
-function buildPhone() {
-  const phone = new THREE.Group();
-  const bodyGeo = new THREE.ExtrudeGeometry(roundedRect(W, H, R),
-    { depth: D, bevelEnabled: true, bevelThickness: 0.008, bevelSize: 0.008, bevelSegments: 4, curveSegments: 16 });
-  bodyGeo.translate(0, 0, -D / 2);
-  phone.add(new THREE.Mesh(bodyGeo, bodyMat));
-  const sGeo = new THREE.ShapeGeometry(roundedRect(W - 0.03, H - 0.03, R - 0.015));
-  const pos = sGeo.attributes.position, uv = [];
-  for (let i = 0; i < pos.count; i++) uv.push(pos.getX(i) / (W - 0.03) + 0.5, pos.getY(i) / (H - 0.03) + 0.5);
-  sGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-  const screen = new THREE.Mesh(sGeo, screenMat); screen.position.z = D / 2 + 0.0095; phone.add(screen);
-  const bump = new THREE.Mesh(new THREE.ExtrudeGeometry(roundedRect(0.3, 0.3, 0.07), { depth: 0.02, bevelEnabled: false }), bumpMat);
-  bump.rotation.y = Math.PI; bump.position.set(W / 2 - 0.19, H / 2 - 0.19, -D / 2 - 0.008); phone.add(bump);
-  [[-0.065, 0.065], [-0.065, -0.065], [0.065, 0]].forEach(([dx, dy]) => {
-    const l = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.048, 0.025, 24), lensMat);
-    l.rotation.x = Math.PI / 2; l.position.set(W / 2 - 0.19 - dx, H / 2 - 0.19 + dy, -D / 2 - 0.035); phone.add(l);
-  });
-  const addBtn = (x, y, h) => { const b = new THREE.Mesh(new THREE.BoxGeometry(0.012, h, 0.03), bodyMat); b.position.set(x, y, 0); phone.add(b); };
-  addBtn(W / 2 + 0.006, 0.28, 0.16); addBtn(-W / 2 - 0.006, 0.4, 0.07); addBtn(-W / 2 - 0.006, 0.22, 0.12); addBtn(-W / 2 - 0.006, 0.06, 0.12);
-  const axes = new THREE.AxesHelper(0.55); axes.material.depthTest = false; axes.renderOrder = 2; phone.add(axes);
-  return phone;
-}
-
-// ======================= 자세 모드 장면 =======================
-const sceneA = new THREE.Scene(); addLights(sceneA);
-const camA = new THREE.PerspectiveCamera(40, 1, 0.01, 100);
-const gridA = new THREE.GridHelper(6, 24, 0x3b4252, 0x1f2430); gridA.position.y = -1.1; sceneA.add(gridA);
-function floorLabel(text, color) {
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 0.4),
-    new THREE.MeshBasicMaterial({ map: textTexture(text, color), transparent: true, depthWrite: false }));
-  m.rotation.x = -Math.PI / 2; return m;
-}
-[['앞', 0, -2.4, '#60a5fa'], ['뒤', 0, 2.4, '#64748b'], ['좌', -2.4, 0, '#64748b'], ['우', 2.4, 0, '#64748b']]
-  .forEach(([t, x, z, c]) => { const l = floorLabel(t, c); l.position.set(x, -1.09, z); sceneA.add(l); });
-const phoneA = buildPhone(); sceneA.add(phoneA);
-const accArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(), 0.001, 0xf59e0b, 0.12, 0.07);
-sceneA.add(accArrow);
-const views = [
-  { name: '정면', pos: [0, 0.6, 3.6] }, { name: '위', pos: [0, 4.2, 0.01] },
-  { name: '측면', pos: [3.6, 0.6, 0] }, { name: '사선', pos: [2.4, 2.0, 2.6] },
-];
-let viewIdx = 0;
-function applyView() { camA.position.set(...views[viewIdx].pos); camA.lookAt(0, 0, 0); }
-applyView();
-
-// ======================= 궤적 모드 장면 (단위: m) =======================
-const sceneT = new THREE.Scene(); addLights(sceneT);
-const camT = new THREE.PerspectiveCamera(50, 1, 0.005, 200);
-camT.position.set(1.3, 1.1, 1.8);
-const controls = new OrbitControls(camT, canvas);
-controls.enableDamping = true; controls.dampingFactor = 0.12; controls.target.set(0, 0, 0);
-controls.minDistance = 0.15; controls.maxDistance = 1e6;
-controls.enabled = false;
-
-const plot = new THREE.Group(); sceneT.add(plot);       // 좌표축·눈금 (크기 자동 조절)
-// 추: 실 + 원뿔 추. 움직일 때 가속도 반대 방향으로 흔들림
-const plumb = (() => {
-  const g = new THREE.Group(); sceneT.add(g);
-  const strGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
-  const str = new THREE.Line(strGeo, new THREE.LineBasicMaterial({ color: 0xfbbf24 })); str.frustumCulled = false; g.add(str);
-  const bob = new THREE.Group();
-  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.13, 24),
-    new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.6, roughness: 0.3 }));
-  cone.rotation.x = Math.PI; cone.position.y = -0.065; bob.add(cone);
-  const cap = new THREE.Mesh(new THREE.SphereGeometry(0.045, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2),
-    new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.6, roughness: 0.3 })); bob.add(cap);
-  g.add(bob);
-  const label = sprite('중력 ▼', '#fbbf24', 0.08, 60); g.add(label);
-  return { g, str, strGeo, bob, label, anchor: new THREE.Vector3(), len: 1, dir: new THREE.Vector3(0, -1, 0) };
-})();
-let plotSize = 0;
-const axisNames = { x: 'X 오른쪽', z: '앞' };
-function buildPlot(L) {          // L = 축 반길이(m)
-  if (L === plotSize) return; plotSize = L;
-  plot.children.slice().forEach(o => { plot.remove(o); o.geometry?.dispose?.(); });
-  const nice = (x) => { const e = 10 ** Math.floor(Math.log10(x)), m = x / e; return (m < 1.5 ? 1 : m < 3.5 ? 2.5 : m < 7.5 ? 5 : 10) * e; };
-  const step = nice(L / 10), major = nice(L / 2.5);
-  camT.near = L * 0.003; camT.far = L * 200; camT.updateProjectionMatrix();
-  const div = Math.round((2 * L) / step);
-  // 그래프 상자: 바닥(채움+격자)은 상자 맨 아래, 원점은 상자 가운데
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(2 * L, 2 * L),
-    new THREE.MeshBasicMaterial({ color: 0x1b2333, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }));
-  floor.rotation.x = -Math.PI / 2; floor.position.y = -L - 0.002; plot.add(floor);
-  const fine = new THREE.GridHelper(2 * L, div, 0x2a3446, 0x2a3446); fine.position.y = -L; plot.add(fine);
-  const coarse = new THREE.GridHelper(2 * L, Math.round((2 * L) / major), 0x46536b, 0x46536b); coarse.position.y = -L + 0.001; plot.add(coarse);
-  const box = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(2 * L, 2 * L, 2 * L)),
-    new THREE.LineBasicMaterial({ color: 0x334155 }));
-  plot.add(box);
-  // 천장 표시 (윗면 테두리를 옅게 강조)
-  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(2 * L, 2 * L),
-    new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.04, side: THREE.DoubleSide, depthWrite: false }));
-  ceil.rotation.x = -Math.PI / 2; ceil.position.y = L; plot.add(ceil);
-  const floorLab = sprite('바닥', '#94a3b8', L * 0.08, 60); floorLab.position.set(L * 0.8, -L + L * 0.05, L * 0.8); plot.add(floorLab);
-  // 추 (상자 뒤-왼쪽 윗모서리에 매달림)
-  plumb.anchor.set(-L, L, -L); plumb.len = 1.45 * L;
-  plumb.bob.scale.setScalar(L); plumb.label.scale.set(L * 0.16, L * 0.08, 1);
-  const axis = (dir, color, name) => {
-    const v = new THREE.Vector3(...dir);
-    const g = new THREE.BufferGeometry().setFromPoints([v.clone().multiplyScalar(-L), v.clone().multiplyScalar(L)]);
-    const line = new THREE.Line(g, new THREE.LineBasicMaterial({ color, depthTest: false })); line.renderOrder = 3; plot.add(line);
-    const head = new THREE.Mesh(new THREE.ConeGeometry(L * 0.025, L * 0.07, 16), new THREE.MeshBasicMaterial({ color }));
-    head.position.copy(v.clone().multiplyScalar(L)); head.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), v); plot.add(head);
-    const lab = sprite(name, '#' + color.toString(16).padStart(6, '0'), L * 0.09, 70);
-    lab.position.copy(v.clone().multiplyScalar(L * 1.12)); plot.add(lab);
-    for (let x = major; x < L + 1e-6; x += major) for (const s of [1, -1]) {
-      const val = s * x, txt = Math.abs(val) >= 1000 ? (val / 1000).toFixed(Math.abs(val) % 1000 ? 1 : 0) + 'k' : val.toFixed(major < 1 ? 1 : 0);
-      const t = sprite(txt, '#8b96a8', L * 0.075, 60);
-      t.position.copy(v.clone().multiplyScalar(s * x)); t.position.y += (dir[1] ? 0 : L * 0.03);
-      if (dir[1]) t.position.x += L * 0.06;
-      plot.add(t);
-    }
-  };
-  axis([1, 0, 0], 0xef4444, axisNames.x);
-  axis([0, 1, 0], 0x22c55e, '▲ 위');
-  const down = sprite('▼ 아래', '#22c55e', L * 0.09, 70); down.position.set(0, -L * 1.12, 0); plot.add(down);
-  axis([0, 0, -1], 0x3b82f6, axisNames.z);
-  const unit = sprite('단위: m', '#64748b', L * 0.05, 48); unit.position.set(-L, 0, L); plot.add(unit);
-}
-buildPlot(1);
-
-// 궤적 선 (속도에 따라 색)
-const MAXP = 60000;
-const lastPt = new THREE.Vector3();
-// 굵은 선: 세그먼트 버퍼를 미리 잡아두고 instanceCount만 늘림
-const trailGeo = new LineSegmentsGeometry();
-trailGeo.setPositions(new Float32Array(MAXP * 6));
-trailGeo.setColors(new Float32Array(MAXP * 6));
-const segPos = trailGeo.attributes.instanceStart.data, segCol = trailGeo.attributes.instanceColorStart.data;
-trailGeo.instanceCount = 0;
-const trail = new LineSegments2(trailGeo, new LineMaterial({ vertexColors: true, linewidth: 3.5, worldUnits: false }));
-trail.frustumCulled = false; sceneT.add(trail);
-const prevP = new THREE.Vector3(), prevC = new THREE.Color();
-// 바닥 그림자 궤적
-const shadowPos = new Float32Array(MAXP * 3);
-const shadowGeo = new THREE.BufferGeometry();
-shadowGeo.setAttribute('position', new THREE.BufferAttribute(shadowPos, 3).setUsage(THREE.DynamicDrawUsage));
-shadowGeo.setDrawRange(0, 0);
-const shadow = new THREE.Line(shadowGeo, new THREE.LineBasicMaterial({ color: 0x475569, transparent: true, opacity: 0.6 }));
-shadow.frustumCulled = false; sceneT.add(shadow);
-let nPts = 0;
-
-const phoneT = buildPhone(); phoneT.scale.setScalar(0.1); sceneT.add(phoneT);   // 실제 크기
-const dropGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
-const drop = new THREE.Line(dropGeo, new THREE.LineDashedMaterial({ color: 0x94a3b8, dashSize: 0.02, gapSize: 0.015 }));
-drop.frustumCulled = false; sceneT.add(drop);
-const origin = new THREE.Mesh(new THREE.SphereGeometry(0.012, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-sceneT.add(origin);
-
-// ---------- 센서 ----------
-// deviceorientation: R = Rz(alpha)·Rx(beta)·Ry(gamma), 지구 좌표(X=동, Y=북, Z=위)
-// 지구 → three.js 좌표(Y=위, -Z=앞): X축 -90° 회전
-const qEarthToThree = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
-const euler = new THREE.Euler();
-const qTarget = new THREE.Quaternion();
-let alphaOffset = null;
-let last = null, heading = null, gotOrientation = false;
-const lin = new THREE.Vector3(), linSmooth = new THREE.Vector3();
-let rate = { a: 0, b: 0, g: 0 }, accG = { x: 0, y: 0, z: 0 }, hz = 0, nOri = 0, tHz = performance.now();
-
-function onOrientation(e) {
-  if (e.alpha == null) return;
-  gotOrientation = true; nOri++;
-  last = { a: e.alpha, b: e.beta, g: e.gamma };
-  if (e.webkitCompassHeading != null) heading = e.webkitCompassHeading;
-  if (alphaOffset === null) alphaOffset = e.alpha;
-  nav.orientation(e.alpha, e.beta, e.gamma, e.webkitCompassHeading, e.webkitCompassAccuracy);
-  if (logging) logRows.push(['o', +(e.timeStamp ?? performance.now()).toFixed(1), r3(e.alpha), r3(e.beta), r3(e.gamma), r3(e.webkitCompassHeading), r3(e.webkitCompassAccuracy)]);
-  euler.set(e.beta * deg, e.gamma * deg, (e.alpha - alphaOffset) * deg, 'ZXY');
-  qTarget.setFromEuler(euler).premultiply(qEarthToThree);
-}
-
-// ---------- 관성 항법 (가속도 2중 적분, 계산은 nav.js) ----------
-const nav = new Nav(PRESETS.normal);
-const r3 = (v) => v == null ? null : Math.round(v * 1000) / 1000;
-let logging = false, logRows = [], logT0 = 0;
-let segIdx = 0; const segPrevP = new THREE.Vector3(), segPrevC = new THREE.Color(), segLastPt = new THREE.Vector3();
-
-function navReset() {
-  nav.reset();
-  nPts = 0; trailGeo.instanceCount = 0; shadowGeo.setDrawRange(0, 0); lastPt.set(0, 0, 0);
-  addPoint(nav.pos, 0);
-  if (last) { alphaOffset = last.a; onOrientation({ alpha: last.a, beta: last.b, gamma: last.g }); }
-  buildPlot(1); gravityView();
-}
-function addPoint(p, speed) {
-  if (nPts >= MAXP) return;
-  const i = nPts * 3;
-  shadowPos[i] = p.x; shadowPos[i + 1] = 0; shadowPos[i + 2] = p.z;
-  const c = new THREE.Color().setHSL(0.6 - Math.min(speed / 1.5, 1) * 0.6, 0.9, 0.58);
-  if (nPts > 0) {
-    const s = (nPts - 1) * 6;
-    segPos.array.set([prevP.x, prevP.y, prevP.z, p.x, p.y, p.z], s);
-    segCol.array.set([prevC.r, prevC.g, prevC.b, c.r, c.g, c.b], s);
-    segPos.needsUpdate = true; segCol.needsUpdate = true;
-    trailGeo.instanceCount = nPts;
-  }
-  prevP.copy(p); prevC.copy(c); lastPt.copy(p);
-  nPts++;
-  shadowGeo.setDrawRange(0, nPts); shadowGeo.attributes.position.needsUpdate = true;
-}
-
-function onMotion(e) {
-  const a = e.acceleration, ag = e.accelerationIncludingGravity, r = e.rotationRate;
-  if (a && a.x != null) lin.set(a.x, a.y, a.z);
-  if (ag && ag.x != null) accG = { x: ag.x, y: ag.y, z: ag.z };
-  if (r && r.alpha != null) rate = { a: r.alpha, b: r.beta, g: r.gamma };
-  const ts = e.timeStamp ?? performance.now();
-  if (logging) logRows.push(['m', +ts.toFixed(1), r3(a?.x), r3(a?.y), r3(a?.z), r3(ag?.x), r3(ag?.y), r3(ag?.z), r3(r?.alpha), r3(r?.beta), r3(r?.gamma), r3(e.interval)]);
-  const res = nav.motion(ts, a, ag, r);
-  if (nav.segStarted) {          // 움직임 구간 시작: 나중에 보정해서 다시 그릴 위치 기억
-    nav.segStarted = false;
-    segIdx = nPts; segPrevP.copy(prevP); segPrevC.copy(prevC); segLastPt.copy(lastPt);
-  }
-  if (res === 1) {
-    if (lastPt.distanceTo(nav.pos) > 0.004) addPoint(nav.pos, nav.vel.length());
-  } else if (res === 2 && nav.lastSeg) {
-    // 정지 확인 → 구간 끝 속도 오차로 보정된 경로로 다시 그림
-    nPts = segIdx; prevP.copy(segPrevP); prevC.copy(segPrevC); lastPt.copy(segLastPt);
-    const s = nav.lastSeg;
-    for (let i = 1; i < s.length; i++) if (lastPt.distanceTo(s[i]) > 0.004 || i === s.length - 1) addPoint(s[i], s[i].sp);
-    trailGeo.instanceCount = Math.max(0, nPts - 1);
-    nav.lastSeg = null;
-  }
-}
-
-async function start() {
-  $('err').textContent = '';
-  if (!window.isSecureContext) { $('err').textContent = 'HTTPS 주소로 접속해야 센서를 쓸 수 있습니다.'; return; }
-  try {
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-      const [p1, p2] = await Promise.all([
-        DeviceOrientationEvent.requestPermission(),
-        typeof DeviceMotionEvent?.requestPermission === 'function' ? DeviceMotionEvent.requestPermission() : 'granted',
-      ]);
-      if (p1 !== 'granted') { $('err').textContent = '센서 권한이 거부되었습니다. Safari를 완전히 닫았다가 다시 열어 주세요.'; return; }
-      if (p2 !== 'granted') $('err').textContent = '가속도 권한 거부 — 궤적 모드를 쓸 수 없습니다.';
-    }
-  } catch (err) { $('err').textContent = '권한 요청 실패: ' + err.message; return; }
-  stopDemo(); alphaOffset = null; gotOrientation = false;
-  addEventListener('deviceorientation', onOrientation);
-  addEventListener('devicemotion', onMotion);
-  $('start').style.display = 'none';
-  setTimeout(() => {
-    if (!gotOrientation) {
-      $('start').style.display = 'flex';
-      $('err').textContent = '센서 값이 들어오지 않습니다. 이 기기에 자이로 센서가 없거나 브라우저가 막고 있습니다.';
-    }
-  }, 2500);
-}
-$('btnStart').addEventListener('click', start);
-
-// ---------- 버튼 ----------
-let mode = 'A';
-function setMode(m) {
-  mode = m;
-  $('hudA').hidden = $('barA').hidden = m !== 'A';
-  $('hudT').hidden = $('barT').hidden = m !== 'T';
-  controls.enabled = m === 'T';
-  if (m === 'T' && nPts === 0) navReset();
-}
-document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => setMode(mode === 'A' ? 'T' : 'A')));
-$('btnZero').addEventListener('click', () => { if (last) { alphaOffset = last.a; nav.alphaOffset = last.a; onOrientation({ alpha: last.a, beta: last.b, gamma: last.g }); } });
-$('btnView').addEventListener('click', () => { viewIdx = (viewIdx + 1) % views.length; applyView(); $('btnView').textContent = '시점: ' + views[viewIdx].name; });
-$('btnVec').addEventListener('click', (e) => { accArrow.visible = !accArrow.visible; e.currentTarget.classList.toggle('on', accArrow.visible); });
-$('btnReset').addEventListener('click', navReset);
-$('btnRec').addEventListener('click', (e) => {
-  nav.rec = !nav.rec; e.currentTarget.classList.toggle('on', nav.rec);
-  e.currentTarget.textContent = nav.rec ? '기록 중' : '일시정지';
-  if (!nav.rec) nav.vel.set(0, 0, 0);
-});
-$('btnFix').addEventListener('click', (e) => { nav.fix = !nav.fix; e.currentTarget.classList.toggle('on', nav.fix); });
-let carMode = false;
-$('btnCar').addEventListener('click', (e) => {
-  carMode = !carMode; e.currentTarget.classList.toggle('on', carMode);
-  nav.setParams(carMode ? PRESETS.vehicle : PRESETS.normal);
-});
-// GPS·나침반 융합
-let gpsWatch = null, gpsErr = '';
-function gpsLine() {
-  const age = (performance.now() - nav.gpsFixT) / 1000;
-  const g = nav.origin
-    ? `🛰 GPS ±${(nav.gpsAcc ?? 0).toFixed(0)}m · ${nav.gpsSpeed != null ? (nav.gpsSpeed * 3.6).toFixed(0) + 'km/h' : '속도 없음'} · ${nav.gpsN}회${age > 3 ? ` · <span class="hint">${age.toFixed(0)}초 전</span>` : ''}`
-    : `🛰 <span class="hint">${gpsErr || 'GPS 신호 대기 중…'}</span>`;
-  const c = nav.yawCorr != null
-    ? `🧭 방위 보정 ${nav.yawCorr > 180 ? (nav.yawCorr - 360).toFixed(1) : nav.yawCorr.toFixed(1)}°${nav.headingAcc != null ? ` (±${nav.headingAcc.toFixed(0)}°)` : ''}`
-    : '🧭 <span class="hint">나침반 대기</span>';
-  return g + ' · ' + c;
-}
-function onGps(pos) {
-  const c = pos.coords, f = { ts: performance.now(), lat: c.latitude, lon: c.longitude, alt: c.altitude, acc: c.accuracy,
-    altAcc: c.altitudeAccuracy, speed: c.speed, heading: c.heading };
-  gpsErr = '';
-  nav.gps(f);
-  if (logging) logRows.push(['g', +f.ts.toFixed(1), f.lat, f.lon, r3(f.alt), r3(f.acc), r3(f.altAcc), r3(f.speed), r3(f.heading)]);
-}
-$('btnGps').addEventListener('click', (e) => {
-  const on = !nav.gpsOn;
-  if (on && !('geolocation' in navigator)) { gpsErr = '이 브라우저는 위치를 지원하지 않습니다'; return; }
-  e.currentTarget.classList.toggle('on', on);
-  nav.setGps(on);
-  axisNames.x = on ? '동 →' : 'X 오른쪽'; axisNames.z = on ? '북' : '앞';
-  if (on) {
-    gpsErr = '';
-    gpsWatch = navigator.geolocation.watchPosition(onGps, (err) => {
-      gpsErr = err.code === 1 ? '위치 권한 거부 — 설정 > Safari > 위치에서 허용' : '위치 오류: ' + err.message;
-    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
-    if (!follow) $('btnFollow').click();
-  } else if (gpsWatch != null) { navigator.geolocation.clearWatch(gpsWatch); gpsWatch = null; }
-  navReset();
-  plotSize = 0; buildPlot(1); gravityView();
-});
-$('btnMore').addEventListener('click', () => { $('more').hidden = !$('more').hidden; });
-// 센서 원본 녹화 → 서버 업로드 (알고리즘 조정용)
-$('btnLog').addEventListener('click', async (e) => {
-  const b = e.currentTarget;
-  if (!logging) {
-    logRows = []; logT0 = Date.now(); logging = true; b.classList.add('on'); b.textContent = '■ 녹화 중지·전송';
-    return;
-  }
-  logging = false; b.classList.remove('on'); b.textContent = '전송 중…';
-  const body = JSON.stringify({ startedAt: new Date(logT0).toISOString(), seconds: (Date.now() - logT0) / 1000,
-    ua: navigator.userAgent, carMode, rows: logRows });
-  try {
-    const res = await fetch('/api/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
-    const j = await res.json();
-    b.textContent = res.ok ? `✓ 전송됨 (${j.name})` : '전송 실패';
-  } catch (err) { b.textContent = '전송 실패'; }
-  setTimeout(() => { b.textContent = '● 센서 녹화'; }, 4000);
-});
-let follow = false;
-$('btnFollow').addEventListener('click', (e) => { follow = !follow; e.currentTarget.classList.toggle('on', follow); });
-let level = true;
-$('btnLevel').addEventListener('click', (e) => { level = !level; e.currentTarget.classList.toggle('on', level); });
-// 중력 정렬: 위가 위로, 바닥이 아래로 보이는 기본 시점으로 되돌림
-function gravityView() {
-  const c = follow ? nav.pos : new THREE.Vector3();
-  controls.target.copy(c);
-  camT.position.copy(c).add(new THREE.Vector3(0.62, 0.5, 0.9).multiplyScalar(plotSize * 4.2));
-  camT.up.set(0, 1, 0); controls.update();
-}
-$('btnGrav').addEventListener('click', gravityView);
-
-function resize() {
-  const w = innerWidth, h = innerHeight;
-  renderer.setSize(w, h, false);
-  camA.aspect = camT.aspect = w / h;
-  camA.fov = w < h ? 46 : 32; camT.fov = w < h ? 60 : 45;
-  camA.updateProjectionMatrix(); camT.updateProjectionMatrix();
-}
-addEventListener('resize', resize); resize();
-
-// ---------- 루프 ----------
-const tmp = new THREE.Vector3(), prevTarget = new THREE.Vector3(), gDev = new THREE.Vector3(), qInv = new THREE.Quaternion();
-let rollSm = 0; const qNav = new THREE.Quaternion();
-const fmt = (v, d = 1) => (v >= 0 ? '+' : '') + v.toFixed(d);
-let hudT = 0;
-function frame(t) {
-  requestAnimationFrame(frame);
-  if (t - tHz > 1000) { hz = nOri * 1000 / (t - tHz); nOri = 0; tHz = t; }
-
-  if (mode === 'A') {
-    phoneA.quaternion.slerp(qTarget, 0.35);
-    linSmooth.lerp(lin, 0.25);
-    tmp.copy(linSmooth).multiplyScalar(nav.sign).applyQuaternion(phoneA.quaternion);
-    const mag = tmp.length();
-    if (mag > 0.05) { accArrow.setDirection(tmp.clone().normalize()); accArrow.setLength(Math.min(0.25 + mag * 0.12, 2), 0.12, 0.07); }
-    else accArrow.setLength(0.001, 0.0005, 0.0005);
-    if (t - hudT > 80 && last) {
-      hudT = t;
-      $('pitch').textContent = fmt(last.b, 0) + '°';
-      $('roll').textContent = fmt(last.g, 0) + '°';
-      $('yaw').textContent = heading != null ? Math.round(heading) + '°' : Math.round(last.a) + '°';
-      $('rawtxt').innerHTML =
-        `자이로(°/s) X ${fmt(rate.b)} · Y ${fmt(rate.g)} · Z ${fmt(rate.a)}<br>` +
-        `가속도(m/s²) X ${fmt(accG.x, 2)} · Y ${fmt(accG.y, 2)} · Z ${fmt(accG.z, 2)}<br>` +
-        `선가속도 ${linSmooth.length().toFixed(2)} m/s² · 갱신 ${hz.toFixed(0)}Hz` +
-        (heading != null ? ` · 나침반 ${Math.round(heading)}°` : '');
-    }
-    renderer.render(sceneA, camA);
-    return;
-  }
-
-  // 궤적 모드
-  if (nav.compassOn && nav.q) phoneT.quaternion.slerp(qNav.set(...nav.q), 0.5); else phoneT.quaternion.slerp(qTarget, 0.5);
-  phoneT.position.copy(nav.pos);
-  phoneT.scale.setScalar(0.1 * Math.max(1, plotSize / 4));
-  const dp = dropGeo.attributes.position;
-  dp.setXYZ(0, nav.pos.x, nav.pos.y, nav.pos.z); dp.setXYZ(1, nav.pos.x, -plotSize, nav.pos.z); dp.needsUpdate = true;
-  shadow.position.y = -plotSize + 0.002;
-  // 추: 겉보기 중력(g − a) 방향으로 매달림
-  tmp.set(-nav.aW.x * 0.6, -9.81 - nav.aW.y * 0.6, -nav.aW.z * 0.6).normalize();
-  plumb.dir.lerp(tmp, 0.12).normalize();
-  const end = plumb.dir.clone().multiplyScalar(plumb.len).add(plumb.anchor);
-  plumb.strGeo.attributes.position.setXYZ(0, plumb.anchor.x, plumb.anchor.y, plumb.anchor.z);
-  plumb.strGeo.attributes.position.setXYZ(1, end.x, end.y, end.z); plumb.strGeo.attributes.position.needsUpdate = true;
-  plumb.bob.position.copy(end); plumb.bob.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), plumb.dir);
-  plumb.label.position.copy(end).add(new THREE.Vector3(plotSize * 0.17, -plotSize * 0.06, 0));
-  drop.computeLineDistances();
-  // 축 범위 자동 확대
-  const need = [1, 2, 3, 5, 8, 12, 20, 35, 60, 100, 200, 350, 600, 1000, 2000, 3500, 6000, 10000, 20000].find(L => nav.maxDisp < L * 0.85) || 20000;
-  if (need > plotSize) { const old = plotSize; buildPlot(need); camT.position.sub(controls.target).multiplyScalar(need / old).add(controls.target); }
-  if (follow) {
-    prevTarget.copy(controls.target);
-    controls.target.lerp(nav.pos, 0.15);
-    camT.position.add(tmp.copy(controls.target).sub(prevTarget));
-  }
-  controls.update();
-  // 수평 유지: 폰을 옆으로 기울여도 그래프의 '아래'가 실제 중력 방향을 향하도록 화면을 반대로 돌림
-  if (level && gotOrientation) {
-    gDev.set(0, -1, 0).applyQuaternion(qInv.copy(qTarget).invert());
-    if (Math.hypot(gDev.x, gDev.y) > 0.3) {          // 폰을 거의 눕혔을 때는 직전 값 유지
-      const phi = Math.atan2(gDev.x, -gDev.y);
-      let d = phi - rollSm; d = Math.atan2(Math.sin(d), Math.cos(d));
-      rollSm += d * 0.25;
-    }
-    camT.rotateZ(-rollSm);
-  }
-  if (t - hudT > 100) {
-    hudT = t;
-    const spd = nav.vel.length();
-    $('tDist').textContent = nav.dist.toFixed(2) + ' m';
-    $('tDisp').textContent = nav.pos.length().toFixed(2) + ' m';
-    $('tSpd').textContent = spd.toFixed(2) + ' m/s';
-    const state = !gotOrientation ? '센서 대기' : nav.still
-      ? '<span id="still" style="background:#16a34a33;color:#4ade80">정지</span>'
-      : '<span id="still" style="background:#f59e0b33;color:#fbbf24">이동</span>';
-    $('ttxt').innerHTML =
-      `${state} 위치 ${nav.gpsOn ? '동' : 'X'} ${fmt(nav.pos.x, 2)} · 위 ${fmt(nav.pos.y, 2)} · ${nav.gpsOn ? '북' : '앞'} ${fmt(-nav.pos.z, 2)} m<br>` +
-      `진동 ${nav.noise.toFixed(2)} · 정지기준 ${nav.thr.toFixed(2)} · 흔들림 ${nav.std.toFixed(2)} m/s² · ${hz.toFixed(0)}Hz` +
-      (nav.gpsOn ? '<br>' + gpsLine() : '') +
-      (logging ? ` · <b style="color:#f87171">녹화 ${((Date.now() - logT0) / 1000).toFixed(0)}초</b>` : '') +
-      (nav.warm < 30 && !nav.gpsOn ? '<br><b style="color:#fbbf24">처음엔 1초 정도 가만히 두세요</b>' : '') +
-      (!carMode && nav.noise > 0.12 ? '<br><span class="hint">진동이 큽니다 — 🚗 차량 모드를 켜세요</span>' : '');
-  }
-  renderer.render(sceneT, camT);
-}
-requestAnimationFrame(frame);
-
-// ---------- 센서 없는 기기(PC)용 미리보기 ----------
-let demo = null;
-function stopDemo() { if (demo) clearInterval(demo); demo = null; }
-if (!/iPhone|iPad|Android/i.test(navigator.userAgent) || !('ondeviceorientation' in window)) {
-  let k = 0, ts = 0;
-  demo = setInterval(() => {
-    k += 0.016; ts += 16;
-    onOrientation({ alpha: 20 * Math.sin(k * 0.5), beta: 60 + 15 * Math.sin(k), gamma: 15 * Math.sin(k * 1.3) });
-    // 1.5초 쉬고 3초 동안 원 두 바퀴(반지름 0.3m)를 반복 — 정지 상태에서 출발·도착
-    const cyc = 4.5, tt = (k % cyc) - 1.5, dur = 3, R = 0.3;
-    let aw = new THREE.Vector3();
-    if (tt > 0) {
-      const u = tt / dur, s = (1 - Math.cos(Math.PI * u)) / 2, sd = Math.PI * Math.sin(Math.PI * u) / (2 * dur), sdd = Math.PI * Math.PI * Math.cos(Math.PI * u) / (2 * dur * dur);
-      const th = 4 * Math.PI * s, thd = 4 * Math.PI * sd, thdd = 4 * Math.PI * sdd;
-      // x=R(1-cos th), z=-R sin th 의 2차 미분
-      aw.set(R * (Math.cos(th) * thd * thd + Math.sin(th) * thdd), 0, -R * (-Math.sin(th) * thd * thd + Math.cos(th) * thdd));
-    }
-    const ad = aw.applyQuaternion(qTarget.clone().invert());
-    const gd = new THREE.Vector3(0, 9.81, 0).applyQuaternion(qTarget.clone().invert());
-    onMotion({ timeStamp: ts, acceleration: { x: ad.x, y: ad.y, z: ad.z },
-      accelerationIncludingGravity: { x: ad.x + gd.x, y: ad.y + gd.y, z: ad.z + gd.z },
-      rotationRate: { alpha: aw.length() > 0.01 ? 30 : 0, beta: 0, gamma: 0 } });
-  }, 16);
-}
-window.__imu = { setMode, nav, navReset };
-</script>
+<script type="module" src="app.js?v=3"></script>
 </body>
 </html>
