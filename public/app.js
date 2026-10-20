@@ -1,5 +1,5 @@
 // 위치 기록 앱 — 지도 모드 / 기록 모드 / 설정
-import { Tracker, dirName } from './track.js?v=5';
+import { Tracker, dirName } from './track.js?v=6';
 import { createMap, inKR } from './mapkit.js?v=5';
 
 const $ = (id) => document.getElementById(id);
@@ -82,7 +82,7 @@ function onCorrect(list, info) {
     ups.push(p); const i = curIdx.get(s); if (i != null) curPts[i] = p;
   }
   if (!ups.length) return;
-  putPts(ups); redrawLines();
+  putPts(ups); redrawLines(); logReset();   // 기록 화면의 추정 줄도 보정된 좌표로
   toast(`GPS 끊김 ${Math.round(info.gapS)}초 구간을 다시 잡힌 위치에 맞춰 보정했습니다 (차이 ${Math.round(info.errM)}m)`, 4000);
 }
 setInterval(() => tracker.tick(performance.now()), 250);

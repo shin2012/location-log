@@ -97,10 +97,10 @@ export class Tracker {
     else return;
     this.lp.design(1.5, this.fs); this.lp.step(this.aW, this.aLP);
     // 진행 방향(상대 좌표) 성분
+    // 거치 각도를 아직 못 배웠으면(직진 GPS 부족) 가속도는 빼고 직전 속도로만 추정
     const fwdRel = this.forwardRel();
-    if (fwdRel == null) return;
-    const aLong = this.aLP.x * Math.sin(fwdRel * D) + (-this.aLP.z) * Math.cos(fwdRel * D);
-    if (!this.dr) { this.aInt += aLong * dt; this.aIntN++; }
+    const aLong = fwdRel == null ? 0 : this.aLP.x * Math.sin(fwdRel * D) + (-this.aLP.z) * Math.cos(fwdRel * D);
+    if (!this.dr && fwdRel != null) { this.aInt += aLong * dt; this.aIntN++; }
     if (this.dr) this.drStep(ts, dt, aLong);
   }
 
