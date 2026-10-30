@@ -34,10 +34,10 @@ final class TrackStore: ObservableObject {
         if activeIndex != nil { return }
         let now = Date()
         let t = LocalTrack(clientId: UUID().uuidString.lowercased(),
-                           name: Fmt.defaultName(now),
+                           name: Fmt.recName(now),
                            startedAt: now.timeIntervalSince1970 * 1000,
                            endedAt: nil, mode: mode, serverId: nil, points: [],
-                           uploadedSeq: -1, needsPatch: mode != .car, distanceM: 0)
+                           uploadedSeq: -1, needsPatch: mode != .car, distanceM: 0, renamed: nil)
         tracks.append(t)
         save(force: true)
     }
@@ -64,14 +64,22 @@ final class TrackStore: ObservableObject {
         save(force: true)
     }
 
-    /// 이 기기에서 지움 (진행 중인 기록은 못 지움). 서버에 이미 만들어졌으면 서버에서도 지움
-    func delete(_ cid: String) {
+    /// 이 기기에서만 지움 (진행 중인 기록은 못 지움). 서버 삭제는 부르는 쪽에서
+    func removeLocal(_ cid: String) {
         guard let i = index(cid), tracks[i].endedAt != nil else { return }
-        let sid = tracks[i].serverId
         tracks.remove(at: i)
         save(force: true)
-        if let sid, !AppSettings.shared.token.isEmpty { Task { try? await API.delete(sid) } }
     }
+
+    func rename(_ cid: String, to name: String) {
+        guard let i = index(cid) else { return }
+        tracks[i].name = name
+        tracks[i].renamed = true
+        tracks[i].needsPatch = true
+        save(force: true)
+    }
+
+    func track(_ cid: String) -> LocalTrack? { tracks.first { $0.clientId == cid } }
 
     /// 기록 끝. 점이 2개 미만이면 버림
     func finish() {
@@ -138,8 +146,9 @@ final class TrackStore: ObservableObject {
         guard let i = index(cid), let sid = tracks[i].serverId else { return }
         if tracks[i].needsPatch {
             let t = tracks[i]
-            _ = try await API.patch(sid, PatchBody(endedAt: t.endedAt, mode: t.mode.rawValue))
-            if let j = index(cid), tracks[j].mode == t.mode, tracks[j].endedAt == t.endedAt {
+            _ = try await API.patch(sid, PatchBody(name: t.renamed == true ? t.name : nil,
+                                                   endedAt: t.endedAt, mode: t.mode.rawValue))
+            if let j = index(cid), tracks[j].mode == t.mode, tracks[j].endedAt == t.endedAt, tracks[j].name == t.name {
                 tracks[j].needsPatch = false
             }
         }

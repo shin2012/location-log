@@ -9,10 +9,19 @@ enum TravelMode: String, CaseIterable, Codable, Identifiable {
 
     var label: String {
         switch self {
-        case .car: return "자동차"
-        case .walk: return "걷기"
+        case .car: return "차량"
+        case .walk: return "도보"
         case .bicycle: return "자전거"
         case .other: return "기타"
+        }
+    }
+
+    var emoji: String {
+        switch self {
+        case .car: return "🚗"
+        case .walk: return "🚶"
+        case .bicycle: return "🚲"
+        case .other: return "📍"
         }
     }
 
@@ -63,6 +72,7 @@ struct LocalTrack: Codable, Identifiable {
     var uploadedSeq: Int    // 서버에 올라간 마지막 seq
     var needsPatch: Bool    // 끝난 시각·이동 수단을 서버에 아직 반영 안 함
     var distanceM: Double
+    var renamed: Bool?      // 이 기기에서 이름을 바꿈 → 마무리할 때 서버에도 이름 반영
 
     var id: String { clientId }
     var nextSeq: Int { (points.last?.seq ?? -1) + 1 }
@@ -104,12 +114,22 @@ struct ServerTrackDetail: Codable {
 }
 
 enum TrackGeometry {
-    /// brk 표시된 곳에서 선을 끊어 여러 조각으로 나눔
+    /// 순간 이동(비행·오래 끊김 뒤 다른 곳): 선을 잇지 않음 — 웹 isBreak와 같음
+    static func isBreak(_ q: TrackPoint?, _ p: TrackPoint) -> Bool {
+        if p.brk == true { return true }
+        guard let q else { return false }
+        let dt = (p.ts - q.ts) / 1000
+        return dt > 0 && p.location.distance(from: q.location) / dt > 120
+    }
+
+    /// 끊기는 곳에서 선을 나눔
     static func segments(_ pts: [TrackPoint]) -> [[CLLocationCoordinate2D]] {
         var out: [[CLLocationCoordinate2D]] = []
         var cur: [CLLocationCoordinate2D] = []
+        var prev: TrackPoint?
         for p in pts {
-            if p.brk == true, !cur.isEmpty {
+            defer { prev = p }
+            if isBreak(prev, p), !cur.isEmpty {
                 out.append(cur)
                 cur = []
             }
@@ -121,6 +141,53 @@ enum TrackGeometry {
 }
 
 enum Fmt {
+    private static let week = Array("일월화수목금토")
+
+    private static func comps(_ ms: Double) -> DateComponents {
+        Calendar.current.dateComponents([.month, .day, .hour, .minute, .second, .weekday],
+                                        from: Date(timeIntervalSince1970: ms / 1000))
+    }
+
+    /// 14:03:09
+    static func hms(_ ms: Double) -> String {
+        let c = comps(ms)
+        return String(format: "%02d:%02d:%02d", c.hour ?? 0, c.minute ?? 0, c.second ?? 0)
+    }
+
+    /// 14:03
+    static func hm(_ ms: Double) -> String { String(hms(ms).prefix(5)) }
+
+    /// 10월 30일 (목)
+    static func dateKo(_ ms: Double) -> String {
+        let c = comps(ms)
+        return "\(c.month ?? 0)월 \(c.day ?? 0)일 (\(week[((c.weekday ?? 1) - 1) % 7]))"
+    }
+
+    /// 01:02:03
+    static func clock(_ s: TimeInterval) -> String {
+        let t = max(0, Int(s))
+        return String(format: "%02d:%02d:%02d", t / 3600, t / 60 % 60, t % 60)
+    }
+
+    /// 5분 / 1시간 20분
+    static func durKo(_ ms: Double) -> String {
+        let m = Int((ms / 60000).rounded())
+        return m < 60 ? "\(m)분" : "\(m / 60)시간 \(m % 60)분"
+    }
+
+    /// 10월 30일 14:03 기록
+    static func recName(_ d: Date) -> String {
+        let c = Calendar.current.dateComponents([.month, .day, .hour, .minute], from: d)
+        return String(format: "%d월 %d일 %02d:%02d 기록", c.month ?? 0, c.day ?? 0, c.hour ?? 0, c.minute ?? 0)
+    }
+
+    /// 북 / 북동 / … (8방위)
+    static func dirName(_ h: Double?) -> String {
+        guard let h else { return "–" }
+        let n = (h.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360)
+        return ["북", "북동", "동", "남동", "남", "남서", "서", "북서"][Int((n / 45).rounded()) % 8]
+    }
+
     static func distance(_ m: Double) -> String {
         m >= 1000 ? String(format: "%.2f km", m / 1000) : String(format: "%.0f m", m)
     }
