@@ -61,7 +61,7 @@ jobs:
             -authenticationKeyID $ASC_KEY_ID -authenticationKeyIssuerID $ASC_ISSUER_ID \
             archive 2>&1 | tee archive.log | grep -E "error:|ARCHIVE" || true
           grep -q "ARCHIVE SUCCEEDED" archive.log
-      - name: TestFlight 업로드
+      - name: IPA 만들기
         working-directory: ios
         run: |
           cat > $RUNNER_TEMP/export.plist <<EOF
@@ -69,7 +69,7 @@ jobs:
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict>
             <key>method</key><string>app-store-connect</string>
-            <key>destination</key><string>upload</string>
+            <key>destination</key><string>export</string>
             <key>teamID</key><string>${TEAM_ID}</string>
             <key>signingStyle</key><string>automatic</string>
             <key>manageAppVersionAndBuildNumber</key><false/>
@@ -80,3 +80,11 @@ jobs:
             -allowProvisioningUpdates \
             -authenticationKeyPath ~/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
             -authenticationKeyID $ASC_KEY_ID -authenticationKeyIssuerID $ASC_ISSUER_ID
+          ls -la $RUNNER_TEMP/export
+      - name: App Store Connect 앱 목록 (진단)
+        continue-on-error: true
+        run: xcrun altool --list-apps --apiKey $ASC_KEY_ID --apiIssuer $ASC_ISSUER_ID 2>&1 | head -40
+      - name: TestFlight 업로드
+        run: |
+          xcrun altool --upload-app -t ios -f "$(ls $RUNNER_TEMP/export/*.ipa | head -1)" \
+            --apiKey $ASC_KEY_ID --apiIssuer $ASC_ISSUER_ID --show-progress
