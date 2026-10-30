@@ -1,0 +1,30 @@
+# 예비용: Xcode 프로젝트가 안 열리면  brew install xcodegen && cd ios && xcodegen
+name: LocationLog
+options:
+  bundleIdPrefix: kr.b612
+  deploymentTarget:
+    iOS: "17.0"
+  developmentLanguage: ko
+targets:
+  LocationLog:
+    type: application
+    platform: iOS
+    sources: [LocationLog]
+    info:
+      path: Config/Info.plist
+      properties:
+        CFBundleDisplayName: 위치 기록
+        NSLocationWhenInUseUsageDescription: 이동 경로를 기록하려면 위치가 필요합니다.
+        NSLocationAlwaysAndWhenInUseUsageDescription: 화면이 꺼져 있거나 다른 앱을 쓰는 동안에도 이동 경로를 계속 기록하려면 '항상 허용'이 필요합니다.
+        UIBackgroundModes: [location]
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: kr.b612.locationlog
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: 1
+        CODE_SIGN_STYLE: Automatic
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

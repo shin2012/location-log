@@ -13,10 +13,22 @@ from pathlib import Path
 
 import pymysql
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 app = FastAPI(title="location-log")
 LOG_DIR = Path(os.environ.get("LOG_DIR", "/data"))
+APP_TOKEN = os.environ.get("APP_TOKEN", "")
+
+
+# 네이티브 앱 경로(/app-api/)는 로그인(tinyauth)을 거치지 않으므로 토큰으로 막음.
+# 웹 nginx가 /app-api/ 요청에만 X-App-Gate: 1 을 붙이고, /api/ 요청에서는 지움.
+@app.middleware("http")
+async def app_gate(request: Request, call_next):
+    if request.headers.get("x-app-gate") == "1":
+        if not APP_TOKEN or request.headers.get("authorization") != f"Bearer {APP_TOKEN}":
+            return JSONResponse({"detail": "토큰이 맞지 않음"}, status_code=401)
+    return await call_next(request)
 
 
 @contextmanager

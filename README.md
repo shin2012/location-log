@@ -115,3 +115,9 @@ NPM: `location.b-612.kr` → `location-web:80`, 인증서 `*.b-612.kr`, tailscal
 | `node tools/replay.mjs logs/<파일> vehicle` | 실험실 센서 녹화 재생 |
 
 </details>
+
+
+## iPhone 네이티브 앱 (`ios/`)
+
+SwiftUI 앱. 백그라운드에서도 GPS 기록. `https://location.b-612.kr/app-api/` (Bearer `APP_TOKEN`, `.env`)로 같은 API 사용.
+자세한 내용: [ios/README.md](ios/README.md)
