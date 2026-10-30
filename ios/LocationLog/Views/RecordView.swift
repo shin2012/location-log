@@ -4,6 +4,7 @@ import MapKit
 struct RecordView: View {
     @EnvironmentObject var recorder: Recorder
     @EnvironmentObject var store: TrackStore
+    @EnvironmentObject var settings: AppSettings
     @State private var camera: MapCameraPosition = .userLocation(followsHeading: false, fallback: .automatic)
     @State private var confirmStop = false
 
@@ -51,7 +52,7 @@ struct RecordView: View {
                         .frame(width: 8, height: 8)
                     Text(recorder.status)
                     Spacer()
-                    if store.pendingPoints > 0 {
+                    if !settings.token.isEmpty && store.pendingPoints > 0 {
                         Text("안 올린 점 \(store.pendingPoints)")
                     }
                 }

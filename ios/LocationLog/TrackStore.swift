@@ -2,6 +2,7 @@ import Foundation
 
 /// 이 기기의 기록을 파일(Application Support/tracks.json)에 보관하고 서버로 올림.
 /// 서버에 다 올라가고 끝난 기록은 목록에서 지움 → 앱이 꺼지거나 통신이 끊겨도 잃지 않음.
+/// 토큰이 없으면 서버로 안 올리고 이 기기에만 계속 보관 (다른 사람 테스트용).
 @MainActor
 final class TrackStore: ObservableObject {
     @Published private(set) var tracks: [LocalTrack] = []
@@ -53,6 +54,23 @@ final class TrackStore: ObservableObject {
         tracks[i].mode = m
         tracks[i].needsPatch = true
         save(force: true)
+    }
+
+    /// 끝난 기록의 이동 수단 바꾸기 (진행 중이면 setMode와 같음)
+    func setMode(_ m: TravelMode, for cid: String) {
+        guard let i = index(cid), tracks[i].mode != m else { return }
+        tracks[i].mode = m
+        tracks[i].needsPatch = true
+        save(force: true)
+    }
+
+    /// 이 기기에서 지움 (진행 중인 기록은 못 지움). 서버에 이미 만들어졌으면 서버에서도 지움
+    func delete(_ cid: String) {
+        guard let i = index(cid), tracks[i].endedAt != nil else { return }
+        let sid = tracks[i].serverId
+        tracks.remove(at: i)
+        save(force: true)
+        if let sid, !AppSettings.shared.token.isEmpty { Task { try? await API.delete(sid) } }
     }
 
     /// 기록 끝. 점이 2개 미만이면 버림

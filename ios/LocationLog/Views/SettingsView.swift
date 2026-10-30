@@ -16,7 +16,7 @@ struct SettingsView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
-                    SecureField("앱 토큰", text: $settings.token)
+                    SecureField("앱 토큰 (선택)", text: $settings.token)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     Button(checking ? "확인 중…" : "연결 확인") {
@@ -29,7 +29,7 @@ struct SettingsView: View {
                 } header: {
                     Text("서버")
                 } footer: {
-                    Text("토큰은 서버 location-log/.env 의 APP_TOKEN 값")
+                    Text("토큰을 비워 두면 기록은 이 기기에만 저장됩니다. 토큰을 넣으면 개인 서버(location.b-612.kr)와 동기화합니다.")
                 }
 
                 Section("상태") {
