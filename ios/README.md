@@ -1,4 +1,4 @@
-# 위치 기록 — iPhone 앱 (SwiftUI)
+# Sillage — 위치 기록 iPhone 앱 (SwiftUI)
 
 웹판(location.b-612.kr)과 같은 서버·DB를 쓰는 네이티브 앱. 화면이 꺼져도 GPS 기록이 계속됨.
 
@@ -11,7 +11,7 @@ open location-log/ios/LocationLog.xcodeproj
 
 1. Xcode 16 이상 (프로젝트 형식 77, 폴더 자동 동기화 — `LocationLog/` 안에 파일을 넣으면 바로 빌드에 포함)
 2. 타깃 LocationLog → Signing & Capabilities → **Team** 선택 (Apple Developer 계정)
-   - 번들 ID `kr.b612.locationlog` 가 이미 쓰이면 바꿔도 됨
+   - 번들 ID `kr.b-612.sillage` 가 이미 쓰이면 바꿔도 됨
 3. iPhone 연결 → 실행
 4. 앱 **설정** 탭 → 앱 토큰 입력 (서버 `~/apps/location-log/.env` 의 `APP_TOKEN`) → **연결 확인**
 5. 위치 권한은 **항상 허용** (설정 탭 버튼으로 이동)

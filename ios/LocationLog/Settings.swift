@@ -20,7 +20,7 @@ final class AppSettings: ObservableObject {
 }
 
 enum Keychain {
-    private static let service = "kr.b612.locationlog"
+    private static let service = "kr.b-612.sillage"
 
     static func set(_ value: String, for key: String) {
         let q: [String: Any] = [
