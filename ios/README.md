@@ -18,17 +18,22 @@ open location-log/ios/LocationLog.xcodeproj
 
 프로젝트 파일이 안 열리면: `brew install xcodegen && cd ios && xcodegen` (project.yml)
 
-## 구조
+## 구조 (웹판 public/app.js와 같은 화면 — 센서 추정 제외)
 
 | 파일 | 하는 일 |
 |---|---|
-| `LocationLogApp.swift` | 진입점, 탭(기록·목록·설정), 5초마다 올리기 |
-| `Recorder.swift` | CLLocationManager. 백그라운드 위치, 정확도 40m 거름, 70m/s 넘는 순간 이동 처리(웹 track.js 규칙) |
-| `TrackStore.swift` | 이 기기 기록을 `Application Support/tracks.json`에 저장 → 서버로 올림(점 500개씩). 다 올라간 끝난 기록은 지움 |
+| `LocationLogApp.swift` | 진입점, 한 화면(지도/기록 모드) + 아래 버튼 3개(화면 전환 · 기록 시작/종료 · 설정), 5초마다 올리기 |
+| `Views/MapModeView.swift` | 전체 지도 + 위 오버레이(속도·방향 게이지·기록 시간, GPS 상태·점 수·업로드 대기) + 내 위치 따라가기 |
+| `Views/LogModeView.swift` | 기록 요약(시간·거리·속도·기록한 위치) + `시각 / 위도, 경도 / 속도` 줄, 20초 넘게 비면 "N분 동안 기록 없음" |
+| `Views/SettingsSheet.swift` | 저장된 기록 목록(날짜·거리·시간·점 수, 기록 중/업로드 대기/보냄 표시, 이동 수단, 지도·이름 변경·데일리요섭 보내기·삭제) + 서버·토큰 + 화면 켜 두기 |
+| `Views/RouteDetailView.swift` | 경로 보기 (지도 + 정보 줄) |
+| `Views/Common.swift` | 색, 안내 메시지(토스트), 상태 줄, 방향 게이지 |
+| `Recorder.swift` | CLLocationManager. 앱이 앞에 있으면 늘 위치·나침반 받음, 기록 중이면 백그라운드도. 정확도 40m, 70m/s 순간 이동 처리, 움직이다 3초 끊기면 "GPS 신호 약함" |
+| `TrackStore.swift` | 기기 저장(`Application Support/tracks.json`) → 서버로 올림(500점씩). 토큰 없으면 기기에만 보관 |
 | `API.swift` | `/app-api/*` 호출 (Bearer 토큰) |
 | `Settings.swift` | 서버 주소(UserDefaults)·토큰(키체인) |
-| `Views/` | 기록 화면(지도+통계), 목록(서버), 상세(지도·이름·이동 수단·데일리요섭 보내기), 설정 |
-| `Config/Info.plist` | 위치 권한 문구, `UIBackgroundModes=location` (나머지는 Xcode가 자동 생성) |
+
+웹과 다른 점: 지도는 Apple 지도(웹은 네이버/Leaflet), 터널 센서 추정·센서 실험실 없음.
 
 ## 서버 쪽 (이미 적용됨)
 
