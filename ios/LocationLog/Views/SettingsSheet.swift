@@ -48,6 +48,9 @@ struct SettingsSheet: View {
     @State private var detail: TrackItem?
     @State private var checkResult: String?
     @State private var checking = false
+    @State private var editingServer = false
+    @State private var draftURL = ""
+    @State private var draftToken = ""
 
     private var items: [TrackItem] {
         let ids = Set(server.map(\.clientId))
@@ -77,22 +80,7 @@ struct SettingsSheet: View {
                     if let e = loadError, !items.isEmpty { Text("서버 목록을 못 불러왔습니다 (\(e))") }
                 }
 
-                Section {
-                    TextField("서버 주소", text: $settings.baseURL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-                    SecureField("앱 토큰 (선택)", text: $settings.token)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    Button(checking ? "확인 중…" : "연결 확인") { Task { await check() } }
-                        .disabled(checking)
-                    if let checkResult { Text(checkResult).font(.caption) }
-                } header: {
-                    Text("서버")
-                } footer: {
-                    Text("토큰을 비워 두면 기록은 이 기기에만 저장됩니다. 토큰을 넣으면 개인 서버와 동기화합니다.")
-                }
+                serverSection
 
                 Section("기타") {
                     Toggle("기록 중 화면 켜 두기", isOn: $keepAwake)
@@ -158,13 +146,85 @@ struct SettingsSheet: View {
         return "\(v) (\(b))"
     }
 
-    private func check() async {
+    /// 서버 연결: 연결돼 있으면 상태만 보여 주고, '수정'을 눌렀을 때만 입력란을 연다
+    @ViewBuilder private var serverSection: some View {
+        Section {
+            if editingServer {
+                TextField("서버 주소", text: $draftURL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                SecureField("앱 토큰 (비우면 이 기기에만 저장)", text: $draftToken)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button(checking ? "확인 중…" : "저장하고 연결 확인") { Task { await saveServer() } }
+                    .disabled(checking)
+                if let checkResult { Text(checkResult).font(.caption).foregroundStyle(Palette.warn) }
+                Button("취소", role: .cancel) { editingServer = false; checkResult = nil }
+                    .foregroundStyle(Palette.dim)
+            } else {
+                HStack(spacing: 10) {
+                    Circle().fill(statusColor).frame(width: 9, height: 9)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(statusText)
+                        Text(statusDetail).font(.caption).foregroundStyle(Palette.dim).lineLimit(2)
+                    }
+                    Spacer()
+                    Button(settings.token.isEmpty ? "연결" : "수정") { startEdit() }
+                        .buttonStyle(.borderless)
+                }
+            }
+        } header: {
+            Text("서버")
+        } footer: {
+            if editingServer {
+                Text("토큰을 비워 두면 기록은 이 기기에만 저장됩니다. 토큰을 넣으면 개인 서버와 동기화합니다.")
+            }
+        }
+    }
+
+    private var host: String { URL(string: settings.baseURL)?.host ?? settings.baseURL }
+
+    private var statusText: String {
+        if settings.token.isEmpty { return "연결 안 함" }
+        if loading { return "확인 중…" }
+        return loadError == nil ? "연결됨" : "연결 안 됨"
+    }
+
+    private var statusDetail: String {
+        if settings.token.isEmpty { return "기록은 이 기기에만 저장됩니다" }
+        if let e = loadError, !loading { return e }
+        return host
+    }
+
+    private var statusColor: Color {
+        if settings.token.isEmpty { return Palette.dim }
+        if loading { return Palette.warn }
+        return loadError == nil ? Palette.ok : Palette.rec
+    }
+
+    private func startEdit() {
+        draftURL = settings.baseURL
+        draftToken = settings.token
+        checkResult = nil
+        editingServer = true
+    }
+
+    /// 입력값을 적용하고 바로 확인. 토큰이 있으면 기록 목록 조회로 토큰까지 검증
+    private func saveServer() async {
         checking = true
         defer { checking = false }
-        do {
-            checkResult = try await API.health() ? "연결됨" : "응답 이상"
-        } catch {
-            checkResult = error.localizedDescription
+        let url = draftURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.baseURL = url.isEmpty ? AppSettings.defaultBaseURL : url
+        settings.token = draftToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        loading = true
+        await reload()
+        if settings.token.isEmpty || loadError == nil {
+            editingServer = false
+            checkResult = nil
+            toaster.show(settings.token.isEmpty ? "이 기기에만 저장합니다" : "서버에 연결됨")
+        } else {
+            checkResult = loadError
         }
     }
 }
