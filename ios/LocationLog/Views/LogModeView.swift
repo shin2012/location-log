@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// 기록 모드: 기록 중이면 위쪽 요약 + `시각  위도, 경도  속도` 줄이 계속 아래로 붙음
+/// 기록 모드: 기록 중이면 위쪽 요약 + `시각  위도, 경도  속도` 줄. 최신 줄이 맨 위
 struct LogModeView: View {
     @EnvironmentObject var recorder: Recorder
     @EnvironmentObject var store: TrackStore
-    @AppStorage("logFollow") private var follow = true   // 새 점이 찍히면 맨 아래(최신)로 따라감
+    @AppStorage("logFollow") private var follow = true   // 새 점이 찍히면 맨 위(최신)로 따라감
     @State private var blink = false
 
     var body: some View {
@@ -102,7 +102,7 @@ struct LogModeView: View {
         }
     }
 
-    /// 마지막 500점 (20초 넘게 비면 "N분 동안 기록 없음" 줄)
+    /// 마지막 500점, 최신이 위 (20초 넘게 비면 "N분 동안 기록 없음" 줄)
     private func rows(_ pts: [TrackPoint]) -> [Row] {
         let tail = pts.suffix(500)
         var out: [Row] = []
@@ -114,15 +114,17 @@ struct LogModeView: View {
             out.append(.point(p, last: p.seq == tail.last?.seq))
             prev = p
         }
-        return out
+        return out.reversed()
     }
 
-    private static let endID = Int.min
+    private static let topID = Int.min
 
     private func list(_ pts: [TrackPoint]) -> some View {
         let rs = rows(pts)
         return ScrollViewReader { proxy in
             ScrollView {
+              VStack(spacing: 0) {
+                Color.clear.frame(height: 0).id(Self.topID)
                 LazyVStack(spacing: 0) {
                     ForEach(rs) { r in
                         switch r {
@@ -138,19 +140,20 @@ struct LogModeView: View {
                         }
                     }
                 }
-                // 맨 끝 표시: 아래 버튼에 가리지 않게 여백 포함
-                Color.clear.frame(height: 110).id(Self.endID)
+                // 아래 버튼에 마지막 줄이 가리지 않게
+                Color.clear.frame(height: 110)
+              }
             }
-            .defaultScrollAnchor(.bottom)
+            .defaultScrollAnchor(.top)
             .onChange(of: pts.last?.seq) { _, _ in
                 guard follow else { return }
-                proxy.scrollTo(Self.endID, anchor: .bottom)
+                proxy.scrollTo(Self.topID, anchor: .top)
             }
             .onChange(of: follow) { _, on in
-                if on { withAnimation { proxy.scrollTo(Self.endID, anchor: .bottom) } }
+                if on { withAnimation { proxy.scrollTo(Self.topID, anchor: .top) } }
             }
             .onAppear {
-                proxy.scrollTo(Self.endID, anchor: .bottom)
+                proxy.scrollTo(Self.topID, anchor: .top)
             }
         }
     }
