@@ -4,7 +4,7 @@ import SwiftUI
 struct LogModeView: View {
     @EnvironmentObject var recorder: Recorder
     @EnvironmentObject var store: TrackStore
-    @State private var stick = true
+    @AppStorage("logFollow") private var follow = true   // 새 점이 찍히면 맨 아래(최신)로 따라감
     @State private var blink = false
 
     var body: some View {
@@ -67,7 +67,21 @@ struct LogModeView: View {
     private var columns: some View {
         HStack(spacing: 8) {
             Text("시각").frame(width: 70, alignment: .leading)
-            Text("위도, 경도").frame(maxWidth: .infinity, alignment: .leading)
+            Text("위도, 경도")
+            Spacer(minLength: 4)
+            Button { follow.toggle() } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: follow ? "checkmark.square.fill" : "square")
+                        .font(.system(size: 15))
+                        .foregroundStyle(follow ? Palette.blue : Palette.dim)
+                    Text("최신 따라가기").foregroundStyle(follow ? .white : Palette.dim)
+                }
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("최신 기록 따라가기")
+            .accessibilityValue(follow ? "켜짐" : "꺼짐")
             Text("속도").frame(width: 64, alignment: .trailing)
         }
         .font(.system(size: 11))
@@ -103,6 +117,8 @@ struct LogModeView: View {
         return out
     }
 
+    private static let endID = Int.min
+
     private func list(_ pts: [TrackPoint]) -> some View {
         let rs = rows(pts)
         return ScrollViewReader { proxy in
@@ -122,15 +138,19 @@ struct LogModeView: View {
                         }
                     }
                 }
-                .padding(.bottom, 110)
+                // 맨 끝 표시: 아래 버튼에 가리지 않게 여백 포함
+                Color.clear.frame(height: 110).id(Self.endID)
             }
             .defaultScrollAnchor(.bottom)
-            .modifier(StickToBottom(stick: $stick))
-            .onChange(of: pts.count) { _, _ in
-                if stick, let last = pts.last { proxy.scrollTo(last.seq, anchor: .bottom) }
+            .onChange(of: pts.last?.seq) { _, _ in
+                guard follow else { return }
+                proxy.scrollTo(Self.endID, anchor: .bottom)
+            }
+            .onChange(of: follow) { _, on in
+                if on { withAnimation { proxy.scrollTo(Self.endID, anchor: .bottom) } }
             }
             .onAppear {
-                if let last = pts.last { proxy.scrollTo(last.seq, anchor: .bottom) }
+                proxy.scrollTo(Self.endID, anchor: .bottom)
             }
         }
     }
@@ -175,22 +195,5 @@ struct LogModeView: View {
             Spacer().frame(height: 120)
         }
         .frame(maxWidth: .infinity)
-    }
-}
-
-/// 사용자가 위로 올려 보고 있으면 새 줄이 와도 자동으로 내리지 않음 (iOS 18+)
-struct StickToBottom: ViewModifier {
-    @Binding var stick: Bool
-
-    func body(content: Content) -> some View {
-        if #available(iOS 18.0, *) {
-            content.onScrollGeometryChange(for: Bool.self) { g in
-                g.contentSize.height - g.contentOffset.y - g.containerSize.height < 60
-            } action: { _, near in
-                stick = near
-            }
-        } else {
-            content
-        }
     }
 }
