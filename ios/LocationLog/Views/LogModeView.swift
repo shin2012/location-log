@@ -4,7 +4,6 @@ import SwiftUI
 struct LogModeView: View {
     @EnvironmentObject var recorder: Recorder
     @EnvironmentObject var store: TrackStore
-    @AppStorage("logFollow") private var follow = true   // 새 점이 찍히면 맨 위(최신)로 따라감
     @State private var blink = false
 
     var body: some View {
@@ -67,21 +66,7 @@ struct LogModeView: View {
     private var columns: some View {
         HStack(spacing: 8) {
             Text("시각").frame(width: 70, alignment: .leading)
-            Text("위도, 경도")
-            Spacer(minLength: 4)
-            Button { follow.toggle() } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: follow ? "checkmark.square.fill" : "square")
-                        .font(.system(size: 15))
-                        .foregroundStyle(follow ? Palette.blue : Palette.dim)
-                    Text("최신 따라가기").foregroundStyle(follow ? .white : Palette.dim)
-                }
-                .padding(.vertical, 4)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("최신 기록 따라가기")
-            .accessibilityValue(follow ? "켜짐" : "꺼짐")
+            Text("위도, 경도").frame(maxWidth: .infinity, alignment: .leading)
             Text("속도").frame(width: 64, alignment: .trailing)
         }
         .font(.system(size: 11))
@@ -117,45 +102,27 @@ struct LogModeView: View {
         return out.reversed()
     }
 
-    private static let topID = Int.min
-
     private func list(_ pts: [TrackPoint]) -> some View {
         let rs = rows(pts)
-        return ScrollViewReader { proxy in
-            ScrollView {
-              VStack(spacing: 0) {
-                Color.clear.frame(height: 0).id(Self.topID)
-                LazyVStack(spacing: 0) {
-                    ForEach(rs) { r in
-                        switch r {
-                        case .gap(_, let text):
-                            Text(text)
-                                .font(.system(size: 12))
-                                .foregroundStyle(Color(red: 0.392, green: 0.455, blue: 0.545))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 8)
-                                .overlay(alignment: .bottom) { Rectangle().fill(Color.white.opacity(0.05)).frame(height: 1) }
-                        case .point(let p, let last):
-                            pointRow(p, last: last).id(r.id)
-                        }
+        return ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(rs) { r in
+                    switch r {
+                    case .gap(_, let text):
+                        Text(text)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(red: 0.392, green: 0.455, blue: 0.545))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .overlay(alignment: .bottom) { Rectangle().fill(Color.white.opacity(0.05)).frame(height: 1) }
+                    case .point(let p, let last):
+                        pointRow(p, last: last).id(r.id)
                     }
                 }
-                // 아래 버튼에 마지막 줄이 가리지 않게
-                Color.clear.frame(height: 110)
-              }
             }
-            .defaultScrollAnchor(.top)
-            .onChange(of: pts.last?.seq) { _, _ in
-                guard follow else { return }
-                proxy.scrollTo(Self.topID, anchor: .top)
-            }
-            .onChange(of: follow) { _, on in
-                if on { withAnimation { proxy.scrollTo(Self.topID, anchor: .top) } }
-            }
-            .onAppear {
-                proxy.scrollTo(Self.topID, anchor: .top)
-            }
+            .padding(.bottom, 110)   // 아래 버튼에 마지막 줄이 가리지 않게
         }
+        .defaultScrollAnchor(.top)
     }
 
     private func pointRow(_ p: TrackPoint, last: Bool) -> some View {
