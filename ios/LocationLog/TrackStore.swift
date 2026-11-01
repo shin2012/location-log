@@ -49,6 +49,18 @@ final class TrackStore: ObservableObject {
         save()
     }
 
+    /// GPS 끊김 구간 추정점을 보정된 좌표로 바꿈 (같은 seq → 서버에서 덮어씀)
+    func correct(_ fixed: [TrackPoint]) {
+        guard let i = activeIndex, let minSeq = fixed.map(\.seq).min() else { return }
+        var pos: [Int: Int] = [:]
+        for (k, p) in tracks[i].points.enumerated() where p.seq >= minSeq { pos[p.seq] = k }
+        for p in fixed { if let k = pos[p.seq] { tracks[i].points[k] = p } }
+        tracks[i].distanceM = TrackGeometry.distance(tracks[i].points)
+        tracks[i].uploadedSeq = min(tracks[i].uploadedSeq, minSeq - 1)
+        tracks[i].resendFrom = min(tracks[i].resendFrom ?? minSeq, minSeq)
+        save(force: true)
+    }
+
     func setMode(_ m: TravelMode) {
         guard let i = activeIndex, tracks[i].mode != m else { return }
         tracks[i].mode = m
@@ -141,6 +153,11 @@ final class TrackStore: ObservableObject {
             let _: OKResponse = try await API.send("POST", "tracks/\(sid)/points", body: PointsBody(points: batch))
             guard let j = index(cid) else { return }
             tracks[j].uploadedSeq = max(tracks[j].uploadedSeq, lastSeq)
+            // 올리는 동안 보정된 점이 있으면 그 앞부터 다시
+            if let r = tracks[j].resendFrom {
+                tracks[j].uploadedSeq = min(tracks[j].uploadedSeq, r - 1)
+                tracks[j].resendFrom = nil
+            }
         }
         // 끝난 시각·이동 수단
         guard let i = index(cid), let sid = tracks[i].serverId else { return }

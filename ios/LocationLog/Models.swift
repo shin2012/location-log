@@ -73,6 +73,7 @@ struct LocalTrack: Codable, Identifiable {
     var needsPatch: Bool    // 끝난 시각·이동 수단을 서버에 아직 반영 안 함
     var distanceM: Double
     var renamed: Bool?      // 이 기기에서 이름을 바꿈 → 마무리할 때 서버에도 이름 반영
+    var resendFrom: Int? = nil  // 보정된 추정점: 이 seq부터 서버에 다시 올림
 
     var id: String { clientId }
     var nextSeq: Int { (points.last?.seq ?? -1) + 1 }
@@ -120,6 +121,50 @@ enum TrackGeometry {
         guard let q else { return false }
         let dt = (p.ts - q.ts) / 1000
         return dt > 0 && p.location.distance(from: q.location) / dt > 120
+    }
+
+    /// 총 거리(m): 끊긴 곳은 빼고
+    static func distance(_ pts: [TrackPoint]) -> Double {
+        var d = 0.0
+        var prev: TrackPoint?
+        for p in pts {
+            if let q = prev, !isBreak(q, p) { d += p.location.distance(from: q.location) }
+            prev = p
+        }
+        return d
+    }
+
+    /// 선 조각: GPS(실선)·추정(점선)으로 나눔. 추정 구간은 앞뒤 GPS 점과 이어 그림
+    struct Run { var est: Bool; var coords: [CLLocationCoordinate2D] }
+    static func runs(_ pts: [TrackPoint]) -> [Run] {
+        var out: [Run] = []
+        var cur: Run?
+        var prev: TrackPoint?
+        func flush() { if let c = cur, c.coords.count > 1 { out.append(c) }; cur = nil }
+        for p in pts {
+            defer { prev = p }
+            let est = p.src == "imu"
+            if isBreak(prev, p) { flush() }
+            if var c = cur, c.est != est {
+                if est {
+                    // GPS → 추정: 점선은 마지막 GPS 점에서 시작
+                    flush()
+                    cur = Run(est: true, coords: [prev!.coordinate, p.coordinate])
+                } else {
+                    // 추정 → GPS: 점선을 다시 잡힌 점까지 그리고 실선 새로 시작
+                    c.coords.append(p.coordinate)
+                    cur = c
+                    flush()
+                    cur = Run(est: false, coords: [p.coordinate])
+                }
+            } else if cur == nil {
+                cur = Run(est: est, coords: [p.coordinate])
+            } else {
+                cur!.coords.append(p.coordinate)
+            }
+        }
+        flush()
+        return out
     }
 
     /// 끊기는 곳에서 선을 나눔

@@ -138,7 +138,8 @@ struct LogModeView: View {
     private func pointRow(_ p: TrackPoint, last: Bool) -> some View {
         HStack(spacing: 8) {
             Text(Fmt.hms(p.ts)).foregroundStyle(Palette.dim).frame(width: 70, alignment: .leading)
-            Text(String(format: "%.5f, %.5f", p.lat, p.lon))
+            (Text(String(format: "%.5f, %.5f", p.lat, p.lon))
+             + (p.src == "imu" ? Text(" 추정").font(.system(size: 11, weight: .semibold)).foregroundColor(Palette.warn) : Text("")))
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
             HStack(alignment: .firstTextBaseline, spacing: 2) {

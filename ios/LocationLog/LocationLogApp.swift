@@ -51,6 +51,9 @@ struct RootView: View {
             ToastView()
         }
         .onAppear { recorder.requestPermission() }
+        .onReceive(recorder.$lastCorrection.compactMap { $0 }) { c in
+            toaster.show("GPS 끊김 \(Int(c.gapS.rounded()))초 구간을 다시 잡힌 위치에 맞춰 보정했습니다 (차이 \(Int(c.errM.rounded()))m)", seconds: 4)
+        }
         .confirmationDialog("기록을 끝낼까요?", isPresented: $confirmStop, titleVisibility: .visible) {
             Button("기록 종료", role: .destructive) {
                 if let name = recorder.stop() { toaster.show("\"\(name)\" 저장했습니다") }

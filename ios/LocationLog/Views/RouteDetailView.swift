@@ -13,9 +13,11 @@ struct RouteDetailView: View {
     var body: some View {
         NavigationStack {
             Map(position: $camera) {
-                ForEach(Array(TrackGeometry.segments(points).enumerated()), id: \.offset) { _, seg in
-                    MapPolyline(coordinates: seg)
-                        .stroke(Palette.route, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+                ForEach(Array(TrackGeometry.runs(points).enumerated()), id: \.offset) { _, run in
+                    // GPS 끊김 구간 추정은 주황 점선 (웹판과 같음)
+                    MapPolyline(coordinates: run.coords)
+                        .stroke(run.est ? Palette.warn : Palette.route,
+                                style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round, dash: run.est ? [6, 8] : []))
                 }
                 if let f = points.first {
                     Marker("출발", coordinate: f.coordinate).tint(.green)

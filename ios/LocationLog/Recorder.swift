@@ -1,8 +1,10 @@
 import Foundation
 import CoreLocation
+import CoreMotion
 import UIKit
 
-/// GPS 기록. 웹판 app.js·track.js와 같은 규칙(센서 추정 제외).
+/// GPS 기록. 웹판 app.js·track.js와 같은 규칙.
+/// GPS가 끊기면(터널 등) 자이로·가속도·나침반으로 경로를 추정해 이어 붙이고(src='imu'), 다시 잡히면 보정.
 /// - 앱이 앞에 있으면 기록 중이 아니어도 위치·방향을 받음(지도·속도·방향 표시용)
 /// - 기록 중이면 화면이 꺼져도(백그라운드) 계속 받음
 @MainActor
@@ -14,6 +16,8 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published private(set) var weak = false                // 마지막 위치가 정확도 기준 밖
     @Published private(set) var compassHeading: Double?
     @Published private(set) var gpsError: String?
+    @Published private(set) var estimating = false          // 센서로 이어 그리는 중
+    @Published private(set) var lastCorrection: DeadReckoner.Correction?
     @Published var mode: TravelMode = .car {
         didSet {
             manager.activityType = mode.activityType
@@ -34,6 +38,11 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
     private var jumpCandidate: CLLocation?
     private var lastSyncKick = Date.distantPast
     private var inForeground = true
+    private let motion = CMMotionManager()
+    private let reckoner = DeadReckoner()
+    private var drSeqs: [Int] = []          // 이번 끊김에서 만든 추정점 seq (만든 순서)
+    private var motionFrame: CMAttitudeReferenceFrame?
+    private var transposeR: Bool?           // 회전 행렬 방향(기기마다 확인)
 
     init(store: TrackStore) {
         self.store = store
@@ -65,12 +74,14 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     /// 최근 5초 안의 속도(m/s)
     var speed: Double? {
+        if estimating { return reckoner.speed }
         guard let l = lastGood, Date().timeIntervalSince(l.timestamp) < 5, l.speed >= 0 else { return nil }
         return l.speed
     }
 
     /// 움직이면 GPS 진행 방향, 멈춰 있으면 나침반
     var heading: Double? {
+        if estimating { return reckoner.course }
         if let s = speed, s > 1.5, let c = lastGood?.course, c >= 0 { return c }
         return compassHeading
     }
@@ -79,6 +90,9 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     func status() -> (text: String, kind: StatusKind) {
         if let e = gpsError { return (e, .warn) }
+        if estimating, let l = lastGood {
+            return ("GPS 끊김 · 센서로 이어 그리는 중 \(Int(Date().timeIntervalSince(l.timestamp)))초", .warn)
+        }
         guard let l = lastGood else {
             return weak ? ("GPS 신호 약함", .warn) : ("위치 확인 중…", .plain)
         }
@@ -146,6 +160,7 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
         manager.allowsBackgroundLocationUpdates = false
         bgSession?.invalidate()
         bgSession = nil
+        stopMotion()
         isRecording = false
         if !inForeground { stopUpdates() }
         applyIdleTimer()
@@ -161,6 +176,7 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
         manager.showsBackgroundLocationIndicator = true
         bgSession = CLBackgroundActivitySession()
         startUpdates()
+        startMotion()
         applyIdleTimer()
     }
 
@@ -176,6 +192,7 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
         MainActor.assumeIsolated {
             guard newHeading.headingAccuracy >= 0 else { return }
             self.compassHeading = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
+            self.reckoner.compass(newHeading.headingAccuracy <= 30 ? self.compassHeading : nil)
         }
     }
 
@@ -226,7 +243,19 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
         let ts = loc.timestamp.timeIntervalSince1970 * 1000
         var brk = false
         var add = 0.0
-        if let last = lastAccepted {
+        let wasDR = reckoner.isEstimating
+        let corr = reckoner.gps(.init(t: loc.timestamp.timeIntervalSince1970,
+                                      lat: loc.coordinate.latitude, lon: loc.coordinate.longitude,
+                                      alt: loc.verticalAccuracy >= 0 ? loc.altitude : nil,
+                                      acc: loc.horizontalAccuracy,
+                                      spd: loc.speed >= 0 ? loc.speed : nil,
+                                      hdg: loc.course >= 0 ? loc.course : nil))
+        if wasDR { finishEstimate(corr) }
+        if wasDR, let last = lastAccepted {
+            // 추정 끝점 → 복귀 위치: 순간 이동 검사 없이 이어 붙임(보정으로 맞춰짐)
+            if (ts - last.ts) <= 0 { return }
+            add = loc.distance(from: last.location)
+        } else if let last = lastAccepted {
             let dt = (ts - last.ts) / 1000
             if dt <= 0 { return }
             let d = loc.distance(from: last.location)
@@ -259,5 +288,88 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
             lastSyncKick = Date()
             Task { await store.sync() }
         }
+    }
+}
+
+// MARK: 센서 추정 (GPS 끊김 구간)
+
+extension Recorder {
+    fileprivate func startMotion() {
+        guard motion.isDeviceMotionAvailable, !motion.isDeviceMotionActive else { return }
+        let frames = CMMotionManager.availableAttitudeReferenceFrames()
+        // 진북 기준이면 가속도를 동·북으로 나눌 수 있음. 없으면 회전만 쓰고 속도는 직전 GPS 값으로
+        let f: CMAttitudeReferenceFrame = frames.contains(.xTrueNorthZVertical) ? .xTrueNorthZVertical : .xArbitraryZVertical
+        motionFrame = f
+        reckoner.reset()
+        drSeqs = []
+        motion.deviceMotionUpdateInterval = 1.0 / 25
+        motion.startDeviceMotionUpdates(using: f, to: .main) { [weak self] dm, _ in
+            guard let self, let dm else { return }
+            MainActor.assumeIsolated { self.onMotion(dm) }
+        }
+    }
+
+    fileprivate func stopMotion() {
+        if motion.isDeviceMotionActive { motion.stopDeviceMotionUpdates() }
+        if reckoner.isEstimating { finishEstimate(nil) }
+        reckoner.reset()
+        estimating = false
+    }
+
+    private func onMotion(_ dm: CMDeviceMotion) {
+        guard isRecording else { return }
+        let g = dm.gravity, w = dm.rotationRate, a = dm.userAcceleration
+        let gn = max(1e-6, (g.x * g.x + g.y * g.y + g.z * g.z).squareRoot())
+        // 수직축 회전(위에서 볼 때 시계 방향 +): ω·ĝ (ĝ = 아래 방향)
+        let yawRateCW = (w.x * g.x + w.y * g.y + w.z * g.z) / gn * 180 / .pi
+        var aN: Double?, aE: Double?
+        if motionFrame == .xTrueNorthZVertical {
+            let r = dm.attitude.rotationMatrix
+            // 회전 행렬이 기기→기준인지 기준→기기인지: 중력이 기준 좌표에서 (0,0,-1)이 되는 쪽
+            if transposeR == nil {
+                let z1 = r.m31 * g.x + r.m32 * g.y + r.m33 * g.z   // R·g
+                let z2 = r.m13 * g.x + r.m23 * g.y + r.m33 * g.z   // Rᵀ·g
+                if abs(z1 - z2) > 0.5 { transposeR = abs(z2 + gn) < abs(z1 + gn) }
+            }
+            if let tr = transposeR {
+                let G = 9.80665
+                let x = tr ? r.m11 * a.x + r.m21 * a.y + r.m31 * a.z : r.m11 * a.x + r.m12 * a.y + r.m13 * a.z
+                let y = tr ? r.m12 * a.x + r.m22 * a.y + r.m32 * a.z : r.m21 * a.x + r.m22 * a.y + r.m23 * a.z
+                aN = x * G          // x = 진북
+                aE = -y * G         // y = 서쪽
+            }
+        }
+        let t = Date().timeIntervalSince1970   // dm.timestamp는 부팅 기준 → GPS와 같은 시계로
+        let pts = reckoner.motion(t: t, yawRateCW: yawRateCW, aNorth: aN, aEast: aE)
+        if estimating && !reckoner.isEstimating {
+            // GPS 없이 추정이 멈춤(앱 멈춤·너무 긴 끊김) → 보정 없이 남김
+            estimating = false
+            drSeqs = []
+        } else if !estimating && reckoner.isEstimating { estimating = true }
+        for q in pts { appendEstimate(q) }
+    }
+
+    private func appendEstimate(_ q: DeadReckoner.Point) {
+        guard let seq = store.active?.nextSeq else { return }
+        let p = TrackPoint(seq: seq, ts: q.t * 1000, lat: q.lat, lon: q.lon, alt: q.alt, acc: q.acc,
+                           spd: q.spd, hdg: q.hdg, src: "imu", brk: nil)
+        let add = lastAccepted.map { p.location.distance(from: $0.location) } ?? 0
+        store.append(p, distanceAdd: add)
+        lastAccepted = p
+        drSeqs.append(seq)
+    }
+
+    /// GPS 복귀: 추정점을 보정된 좌표로 바꿔 다시 올림
+    fileprivate func finishEstimate(_ c: DeadReckoner.Correction?) {
+        estimating = false
+        defer { drSeqs = [] }
+        guard let c, !drSeqs.isEmpty else { return }
+        let fixed = zip(drSeqs, c.points).map { seq, q in
+            TrackPoint(seq: seq, ts: q.t * 1000, lat: q.lat, lon: q.lon, alt: q.alt, acc: q.acc,
+                       spd: q.spd, hdg: q.hdg, src: "imu", brk: nil)
+        }
+        store.correct(fixed)
+        if let l = fixed.last { lastAccepted = l }
+        lastCorrection = c
     }
 }

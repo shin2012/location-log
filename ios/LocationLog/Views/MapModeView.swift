@@ -11,9 +11,11 @@ struct MapModeView: View {
         Map(position: $camera) {
             UserAnnotation()
             if let t = store.active {
-                ForEach(Array(TrackGeometry.segments(t.points).enumerated()), id: \.offset) { _, seg in
-                    MapPolyline(coordinates: seg)
-                        .stroke(Palette.route, style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
+                ForEach(Array(TrackGeometry.runs(t.points).enumerated()), id: \.offset) { _, run in
+                    // GPS 끊김 구간 추정은 주황 점선 (웹판과 같음)
+                    MapPolyline(coordinates: run.coords)
+                        .stroke(run.est ? Palette.warn : Palette.route,
+                                style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round, dash: run.est ? [6, 8] : []))
                 }
             }
         }
