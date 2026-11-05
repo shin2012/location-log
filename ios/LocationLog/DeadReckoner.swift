@@ -68,6 +68,8 @@ final class DeadReckoner {
     private var hist: [(t: Double, spd: Double, I: Double)] = []
     private var nBias = 0
     private var lastYawAtFix: Double?
+    private var aIntAtFix = 0.0         // 마지막 고정점 때의 가속도 적분(정차 판정용)
+    private var aIntNAtFix = 0
 
     private struct DR {
         var t0: Double
@@ -138,6 +140,8 @@ final class DeadReckoner {
         mode = .gps
         last = f
         lastYawAtFix = yawU
+        aIntAtFix = aInt
+        aIntNAtFix = aIntN
         speed = f.spd
         if let h = f.hdg { course = h }
         return corr
@@ -179,16 +183,23 @@ final class DeadReckoner {
         // 센서가 늦게 깨어남(백그라운드 등): 이미 오래 지났으면 메우지 않음
         if gap > p.lossSec + 2.5 { mode = .hold; return [] }
         guard let spd = L.spd, let hdg = L.hdg, let y = yawU, let y0 = lastYawAtFix else { mode = .hold; return [] }
+        // 서서히 멈추는 중(신호 대기 등)이면 마지막 고정점 속도가 아직 빠름 → 그 뒤 진행 방향 가속도로 지금 속도를 다시 셈.
+        // 멈췄으면 GPS가 끊긴 게 아니라 위치가 안 바뀐 것 → 추정하지 않음
+        var vNow = spd
+        if aIntN - aIntNAtFix >= 25 {
+            vNow = max(0, min(spd + (aInt - aIntAtFix) - longBias * gap, spd * 1.6 + 8))
+            if vNow < p.minDrSpeed { return [] }
+        }
         // 끊김은 몇 초 뒤에야 확정 → 마지막 고정점부터 지금까지는 그 속도·방향(+자이로 회전)으로 채움
         let turn = y - y0
         let mid = hdg + turn / 2
-        let dd = spd * gap
+        let dd = (spd + vNow) / 2 * gap
         dr = DR(t0: L.t, lastEmit: L.t, lat0: L.lat, lon0: L.lon,
                 e: dd * sin(mid * Self.D), n: dd * cos(mid * Self.D), posT: now,
-                v: spd, v0: spd, course0: hdg, course: hdg + turn, yaw0: y0,
+                v: vNow, v0: vNow, course0: hdg, course: hdg + turn, yaw0: y0,
                 compassOff: compassTrue.map { wrap(hdg - $0) }, dist: dd)
         mode = .dr
-        speed = spd
+        speed = vNow
         course = norm360(hdg + turn)
         return tick(now)
     }

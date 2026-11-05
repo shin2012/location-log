@@ -30,6 +30,7 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
     static let longGap: Double = 120        // s — 이만큼 끊겼으면 순간 이동도 받아들임
     static let lossSec: Double = 3          // s — 움직이다 이만큼 못 받으면 'GPS 신호 약함'
     static let moveSpeed: Double = 2.5      // m/s
+    static let minStep: Double = 5          // m — 직전 저장점에서 이만큼 안 움직였으면 저장 안 함(정차 중 중복)
 
     let store: TrackStore
     private let manager = CLLocationManager()
@@ -50,7 +51,8 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
         authorization = manager.authorizationStatus
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
-        manager.distanceFilter = 5
+        // 거리 필터를 두면 멈춰 있을 때 위치가 아예 안 와서 'GPS 끊김'으로 오인함 → 1초마다 받고 저장할 때 거름
+        manager.distanceFilter = kCLDistanceFilterNone
         manager.headingFilter = 2
         manager.pausesLocationUpdatesAutomatically = false
         if let a = store.active {
@@ -269,6 +271,10 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
                     jumpCandidate = loc
                     return
                 }
+            } else if d < Self.minStep {
+                // 정차 중: 위치는 받았으니(끊김 아님) 추정기에는 알렸고, 같은 자리 점은 저장 안 함
+                jumpCandidate = nil
+                return
             } else {
                 add = d
             }
