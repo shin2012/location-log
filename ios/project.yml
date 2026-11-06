@@ -15,14 +15,14 @@ targets:
       properties:
         CFBundleDisplayName: Sillage
         NSLocationWhenInUseUsageDescription: 이동 경로를 기록하려면 위치가 필요합니다.
-        NSLocationAlwaysAndWhenInUseUsageDescription: 화면이 꺼져 있거나 다른 앱을 쓰는 동안에도 이동 경로를 계속 기록하려면 '항상 허용'이 필요합니다.
+        NSLocationAlwaysAndWhenInUseUsageDescription: 화면이 꺼져 있거나 다른 앱을 쓰는 동안에도 이동 경로를 계속 기록하려면 '항상 허용'이 필요합니다. '하루 종일 기록'에도 씁니다.
         UIBackgroundModes: [location]
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: kr.b-612.sillage
-        MARKETING_VERSION: "0.4.1"
+        MARKETING_VERSION: "0.5"
         CURRENT_PROJECT_VERSION: 1
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: 1

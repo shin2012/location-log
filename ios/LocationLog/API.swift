@@ -35,7 +35,8 @@ enum API {
         return e
     }()
 
-    static func send<T: Decodable>(_ method: String, _ path: String, body: (any Encodable)? = nil) async throws -> T {
+    static func send<T: Decodable>(_ method: String, _ path: String, body: (any Encodable)? = nil,
+                                   cellular: Bool = true) async throws -> T {
         let s = AppSettings.shared
         let base = s.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: base.hasSuffix("/") ? base + path : base + "/" + path) else {
@@ -44,6 +45,7 @@ enum API {
         var req = URLRequest(url: url)
         req.httpMethod = method
         req.timeoutInterval = 20
+        req.allowsCellularAccess = cellular
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if !s.token.isEmpty {
             req.setValue("Bearer \(s.token)", forHTTPHeaderField: "Authorization")
@@ -68,6 +70,11 @@ enum API {
     static func sendDaily(_ id: Int, _ on: Bool) async throws -> ServerTrack {
         try await send(on ? "POST" : "DELETE", "tracks/\(id)/send-daily")
     }
+    // 하루 종일 기록
+    static func days() async throws -> [ServerDay] { try await send("GET", "day") }
+    static func day(_ date: String) async throws -> ServerDayDetail { try await send("GET", "day/\(date)") }
+    static func deleteDay(_ date: String) async throws { let _: OKResponse = try await send("DELETE", "day/\(date)") }
+
     static func health() async throws -> Bool {
         let r: OKResponse = try await send("GET", "health")
         return r.ok == true

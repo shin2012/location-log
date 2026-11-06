@@ -8,7 +8,7 @@ import math
 import os
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pymysql
@@ -219,6 +219,98 @@ def unsend_daily(tid: int):
         if not r:
             raise HTTPException(404, "없는 기록")
         return track_row(r)
+
+
+# ── 하루 종일 기록 (앱 상시 기록) ─────────────────────────────────────────
+# 점은 ts(UTC) 기준 REPLACE → 같은 묶음을 다시 보내도 안전. 날짜는 한국 시각 기준.
+KST = timezone(timedelta(hours=9))
+DAY_SRC = ("gps", "fill", "stay", "visit", "slc", "region", "trk")
+
+
+class DayPt(BaseModel):
+    ts: float  # epoch ms
+    lat: float
+    lon: float
+    alt: float | None = None
+    acc: float | None = None
+    spd: float | None = None
+    src: str = "gps"
+    act: str | None = Field(default=None, max_length=10)
+
+
+class DayPtsIn(BaseModel):
+    points: list[DayPt]
+
+
+class DayVisit(BaseModel):
+    arrive: float  # epoch ms
+    depart: float | None = None
+    lat: float
+    lon: float
+
+
+class DayVisitsIn(BaseModel):
+    visits: list[DayVisit]
+
+
+def day_range(date: str):
+    try:
+        d = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=KST)
+    except ValueError:
+        raise HTTPException(400, "날짜는 YYYY-MM-DD")
+    a = d.astimezone(timezone.utc).replace(tzinfo=None)
+    return a, a + timedelta(days=1)
+
+
+@app.post("/api/day/points")
+def day_points(body: DayPtsIn):
+    rows = [(ms_to_dt(p.ts), p.lat, p.lon, p.alt, p.acc, p.spd, p.src if p.src in DAY_SRC else "gps", p.act)
+            for p in body.points if -90 <= p.lat <= 90 and -180 <= p.lon <= 180]
+    if rows:
+        with db() as cur:
+            cur.executemany("REPLACE INTO day_pt (ts, lat, lon, alt, acc, spd, src, act) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)", rows)
+    return {"ok": True, "n": len(rows)}
+
+
+@app.post("/api/day/visits")
+def day_visits(body: DayVisitsIn):
+    rows = [(ms_to_dt(v.arrive), None if v.depart is None else ms_to_dt(v.depart), v.lat, v.lon) for v in body.visits]
+    if rows:
+        with db() as cur:
+            cur.executemany("REPLACE INTO day_visit (arrive, depart, lat, lon) VALUES (%s,%s,%s,%s)", rows)
+    return {"ok": True, "n": len(rows)}
+
+
+@app.get("/api/day")
+def day_list(limit: int = 90):
+    """기록 있는 날짜 (한국 시각) + 점 수"""
+    with db() as cur:
+        cur.execute("SELECT DATE(CONVERT_TZ(ts, '+00:00', '+09:00')) AS d, COUNT(*) AS n, MIN(ts) AS a, MAX(ts) AS b "
+                    "FROM day_pt GROUP BY d ORDER BY d DESC LIMIT %s", (max(1, min(limit, 400)),))
+        return [{"date": r["d"].isoformat(), "n_points": r["n"], "first": dt_to_ms(r["a"]), "last": dt_to_ms(r["b"])}
+                for r in cur.fetchall()]
+
+
+@app.get("/api/day/{date}")
+def day_get(date: str):
+    a, b = day_range(date)
+    with db() as cur:
+        cur.execute("SELECT ts, lat, lon, alt, acc, spd, src, act FROM day_pt WHERE ts >= %s AND ts < %s ORDER BY ts", (a, b))
+        pts = [{**p, "ts": dt_to_ms(p["ts"])} for p in cur.fetchall()]
+        cur.execute("SELECT arrive, depart, lat, lon FROM day_visit WHERE (depart IS NULL OR depart >= %s) AND arrive < %s "
+                    "ORDER BY arrive", (a, b))
+        vs = [{**v, "arrive": dt_to_ms(v["arrive"]), "depart": dt_to_ms(v["depart"])} for v in cur.fetchall()]
+    return {"date": date, "points": pts, "visits": vs}
+
+
+@app.delete("/api/day/{date}")
+def day_delete(date: str):
+    a, b = day_range(date)
+    with db() as cur:
+        n = cur.execute("DELETE FROM day_pt WHERE ts >= %s AND ts < %s", (a, b))
+        m = cur.execute("DELETE FROM day_visit WHERE arrive >= %s AND arrive < %s", (a, b))
+    return {"ok": True, "points": n, "visits": m}
 
 
 # 센서 원본 녹화 (알고리즘 조정용, /lab)

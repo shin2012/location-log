@@ -9,8 +9,11 @@ struct LocationLogApp: App {
 
     init() {
         let s = TrackStore()
+        let r = Recorder(store: s)
         _store = StateObject(wrappedValue: s)
-        _recorder = StateObject(wrappedValue: Recorder(store: s))
+        _recorder = StateObject(wrappedValue: r)
+        // 하루 종일 기록: 위치 알림으로 앱이 백그라운드에서 다시 켜져도 여기서 이어짐
+        DayLogger.shared.boot(recorder: r)
     }
 
     var body: some Scene {
@@ -27,6 +30,7 @@ struct LocationLogApp: App {
                 }
                 .onChange(of: phase) { _, p in
                     recorder.setForeground(p == .active)
+                    DayLogger.shared.setForeground(p == .active)
                     if p == .active { Task { await store.sync() } } else { store.save(force: true) }
                 }
         }

@@ -33,6 +33,9 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
     static let minStep: Double = 5          // m — 직전 저장점에서 이만큼 안 움직였으면 저장 안 함(정차 중 중복)
 
     let store: TrackStore
+    /// 하루 종일 기록에 넘김: 기록 중 받은 좋은 위치 / 기록 켜고 끔
+    var onFix: ((CLLocation) -> Void)?
+    var onRecordingChanged: ((Bool) -> Void)?
     private let manager = CLLocationManager()
     private var bgSession: CLBackgroundActivitySession?
     private var lastAccepted: TrackPoint?
@@ -64,7 +67,12 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
         } else {
             manager.activityType = mode.activityType
         }
-        startUpdates()
+        // 하루 종일 기록이 앱을 백그라운드로 다시 켰을 때는 화면용 위치를 켜지 않음
+        if UIApplication.shared.applicationState != .background || isRecording {
+            startUpdates()
+        } else {
+            inForeground = false
+        }
     }
 
     // MARK: 화면에 보일 값
@@ -164,6 +172,7 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
         bgSession = nil
         stopMotion()
         isRecording = false
+        onRecordingChanged?(false)
         if !inForeground { stopUpdates() }
         applyIdleTimer()
         store.finish()
@@ -173,6 +182,7 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     private func beginRecording() {
         isRecording = true
+        onRecordingChanged?(true)
         requestPermission()
         manager.allowsBackgroundLocationUpdates = true
         manager.showsBackgroundLocationIndicator = true
@@ -241,6 +251,7 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
         weak = false
         lastGood = loc
         guard isRecording else { return }
+        onFix?(loc)
 
         let ts = loc.timestamp.timeIntervalSince1970 * 1000
         var brk = false

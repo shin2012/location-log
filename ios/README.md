@@ -32,6 +32,11 @@ open location-log/ios/LocationLog.xcodeproj
 | `TrackStore.swift` | 기기 저장(`Application Support/tracks.json`) → 서버로 올림(500점씩). 토큰 없으면 기기에만 보관 |
 | `API.swift` | `/app-api/*` 호출 (Bearer 토큰) |
 | `Settings.swift` | 서버 주소(UserDefaults)·토큰(키체인) |
+| `DayPolicy.swift` | 하루 종일 기록 상태 기계(순수 Foundation): 머묾/이동/움직임 확인/GPS 확인, 단계별 GPS 설정, 출발 구간 메우기. 리눅스 시뮬 `tools/daysim` |
+| `DayLogger.swift` | 하루 종일 기록 실행: 머무는 동안 저정확도 위치로 앱만 깨워 두고 GPS 끔, 움직임 감지·주기 GPS 확인·경계/방문/기지국 변화로 출발 감지, 배터리 부족 시 절약, 쉬는 시간·제외 장소, 수동 기록 중엔 그 점을 받아 씀 |
+| `DayLogStore.swift` | 날짜별 `day/YYYY-MM-DD.jsonl` 덧붙여 저장 + 묶음 업로드(`/day/points`, Wi-Fi 전용 선택) + 보관 기간 정리 |
+| `DaySettings.swift` | 하루 종일 기록 설정(UserDefaults `day.prefs`) |
+| `Views/DayLogViews.swift` | 설정 › 하루 종일 기록(각 기능 켜고 끄기), 날짜별 목록, 하루 지도(경로 + 머문 곳) |
 
 웹과 다른 점: 지도는 Apple 지도(웹은 네이버/Leaflet), 터널 센서 추정·센서 실험실 없음.
 

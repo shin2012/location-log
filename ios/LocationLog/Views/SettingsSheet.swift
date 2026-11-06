@@ -42,6 +42,7 @@ struct SettingsSheet: View {
     @EnvironmentObject var settings: AppSettings
     @EnvironmentObject var toaster: Toaster
     @AppStorage("keepAwake") private var keepAwake = true
+    @ObservedObject private var dayLogger = DayLogger.shared
     @State private var server: [ServerTrack] = []
     @State private var loadError: String?
     @State private var loading = true
@@ -78,6 +79,14 @@ struct SettingsSheet: View {
                     Text("저장된 기록")
                 } footer: {
                     if let e = loadError, !items.isEmpty { Text("서버 목록을 못 불러왔습니다 (\(e))") }
+                }
+
+                Section {
+                    NavigationLink {
+                        DayLogSettingsView()
+                    } label: {
+                        LabeledContent("하루 종일 기록", value: dayLogger.running ? "켜짐" : "꺼짐")
+                    }
                 }
 
                 serverSection
