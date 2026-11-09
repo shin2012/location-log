@@ -26,6 +26,9 @@ struct DayPrefs: Codable, Equatable {
     // 배터리
     var lowPowerSave = true       // 저전력 모드·20% 이하 → 절약, 주기 확인 끔
     var showIndicator = true      // 상단 파란 위치 표시
+    var chargePrecise = true      // 충전 중이면 정밀 + 머무는 동안 3분마다 확인
+    var driveRecord = true        // 차로 이동 + 충전 중이면 1초 기록(센서 터널 추정 포함)
+    var carplaySend = true        // CarPlay 연결·해제를 서버로 (단축어 대신)
     // 업로드
     var uploadMinutes = 30
     var wifiOnly = false
@@ -50,6 +53,8 @@ struct DayPrefs: Codable, Equatable {
         stayMinutes = v(.stayMinutes, z.stayMinutes); stayRadius = v(.stayRadius, z.stayRadius)
         movingDistance = v(.movingDistance, z.movingDistance); lowPowerSave = v(.lowPowerSave, z.lowPowerSave)
         showIndicator = v(.showIndicator, z.showIndicator); uploadMinutes = v(.uploadMinutes, z.uploadMinutes)
+        chargePrecise = v(.chargePrecise, z.chargePrecise); driveRecord = v(.driveRecord, z.driveRecord)
+        carplaySend = v(.carplaySend, z.carplaySend)
         wifiOnly = v(.wifiOnly, z.wifiOnly); quietOn = v(.quietOn, z.quietOn)
         quietStart = v(.quietStart, z.quietStart); quietEnd = v(.quietEnd, z.quietEnd)
         excluded = v(.excluded, z.excluded); keepDays = v(.keepDays, z.keepDays)
@@ -66,7 +71,8 @@ struct DayPrefs: Codable, Equatable {
         excluded.contains { DayGeo.dist($0.lat, $0.lon, lat, lon) <= $0.radius }
     }
 
-    func policyOptions(lowBattery: Bool) -> DayPolicy.Options {
+    /// boost = 충전 중이고 폰이 뜨겁지 않음
+    func policyOptions(lowBattery: Bool, boost: Bool = false) -> DayPolicy.Options {
         var o = DayPolicy.Options()
         o.level = level
         o.keepAlive = keepAlive
@@ -79,6 +85,9 @@ struct DayPrefs: Codable, Equatable {
         if lowPowerSave && lowBattery {
             o.level = .save
             o.checkMinutes = 0
+        } else if chargePrecise && boost {
+            o.level = .precise
+            if o.checkMinutes > 0 { o.checkMinutes = min(o.checkMinutes, 3) }
         }
         return o
     }

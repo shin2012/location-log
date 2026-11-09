@@ -8,6 +8,8 @@ struct DayLogSettingsView: View {
     @ObservedObject var settings = DaySettings.shared
     @ObservedObject var store = DayLogger.shared.store
     @ObservedObject var motion = MotionHistory.shared
+    @ObservedObject var carplay = CarPlayWatcher.shared
+    @ObservedObject var cpEvents = CarPlayEvents.shared
     @EnvironmentObject var toaster: Toaster
     @State private var newPlaceName = ""
 
@@ -26,6 +28,9 @@ struct DayLogSettingsView: View {
                     if let e = store.lastError { Text(e).font(.caption).foregroundStyle(Palette.warn) }
                     if let u = motion.lastUploadAt { LabeledContent("이동 방식·걸음 업로드", value: Fmt.hm(u.timeIntervalSince1970 * 1000)) }
                     if let e = motion.lastError { Text(e).font(.caption).foregroundStyle(Palette.warn) }
+                    LabeledContent("CarPlay", value: carplay.connected ? "연결됨" : "연결 안 됨")
+                    if !cpEvents.pending.isEmpty { LabeledContent("CarPlay 보낼 기록", value: "\(cpEvents.pending.count)건") }
+                    if let e = cpEvents.lastError { Text("CarPlay: " + e).font(.caption).foregroundStyle(Palette.warn) }
                     if logger.authorization != .authorizedAlways {
                         Button("위치 권한 '항상 허용' 켜기") {
                             if logger.authorization == .notDetermined { logger.requestPermission() }
@@ -83,9 +88,17 @@ struct DayLogSettingsView: View {
 
             Section {
                 Toggle("저전력 모드·배터리 20% 이하면 절약", isOn: p.lowPowerSave)
+                Toggle("충전 중이면 정밀하게", isOn: p.chargePrecise)
+                Toggle("차로 이동 + 충전 중이면 1초 기록", isOn: p.driveRecord)
                 Toggle("상단 위치 사용 표시", isOn: p.showIndicator)
             } header: { Text("배터리") } footer: {
-                Text("절약으로 바뀌면 움직일 때 정확도를 낮추고 머무는 동안 GPS 확인을 멈춥니다.")
+                Text("절약으로 바뀌면 움직일 때 정확도를 낮추고 머무는 동안 GPS 확인을 멈춥니다. 충전 중에는 움직일 때 '정밀', 머무는 동안 3분마다 확인합니다. 차로 이동(CarPlay 연결 또는 차량 움직임)하며 충전 중이면 경로 기록을 자동으로 켜 1초마다 저장하고, 터널처럼 GPS가 끊기면 센서로 이어 그립니다. 내려서 3분(CarPlay 해제 뒤 1분) 지나면 끕니다. 폰이 뜨거우면 둘 다 멈춥니다.")
+            }
+
+            Section {
+                Toggle("CarPlay 연결 기록 보내기", isOn: p.carplaySend)
+            } header: { Text("CarPlay") } footer: {
+                Text("CarPlay에 연결·해제되면 시각과 위치를 데일리요섭(swarm 지도)으로 보냅니다. 연결되면 '내가 운전', 연결 없이 차로 움직이면 '차량 이동'으로 구분합니다. 단축어 자동화와 함께 써도 2분 안 같은 기록은 하나로 합쳐집니다.")
             }
 
             Section {

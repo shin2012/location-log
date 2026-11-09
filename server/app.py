@@ -224,7 +224,7 @@ def unsend_daily(tid: int):
 # ── 하루 종일 기록 (앱 상시 기록) ─────────────────────────────────────────
 # 점은 ts(UTC) 기준 REPLACE → 같은 묶음을 다시 보내도 안전. 날짜는 한국 시각 기준.
 KST = timezone(timedelta(hours=9))
-DAY_SRC = ("gps", "fill", "stay", "visit", "slc", "region", "trk")
+DAY_SRC = ("gps", "fill", "stay", "visit", "slc", "region", "trk", "imu")
 
 
 class DayPt(BaseModel):
@@ -362,6 +362,37 @@ def day_delete(date: str):
         k = cur.execute("DELETE FROM day_act WHERE ts >= %s AND ts < %s", (a, b))
         j = cur.execute("DELETE FROM day_step WHERE ts >= %s AND ts < %s", (a, b))
     return {"ok": True, "points": n, "visits": m, "acts": k, "steps": j}
+
+
+class CarPlayIn(BaseModel):
+    event: str               # car_start | car_end
+    ts: float                # epoch ms
+    lat: float | None = None
+    lng: float | None = None
+
+
+@app.post("/api/carplay")
+def carplay(body: CarPlayIn):
+    """앱이 CarPlay 연결·해제를 알아채면 → swarm 지도(fsq_map) CarPlay API 로 넘김 (단축어 대신).
+    fsq_map 이 2분 안 같은 이벤트는 하나로 합치므로 다시 보내도 안전."""
+    import json as _json
+    import urllib.request
+    if body.event not in ("car_start", "car_end"):
+        raise HTTPException(400, "event 는 car_start / car_end")
+    url, tok = os.environ.get("FSQ_CARPLAY_URL"), os.environ.get("CARPLAY_API_TOKEN")
+    if not url or not tok:
+        raise HTTPException(503, "CarPlay 전달 설정 없음")
+    data = {"event": body.event, "timestamp": body.ts / 1000, "device": "Sillage"}
+    if body.lat is not None and body.lng is not None:
+        data.update(lat=round(body.lat, 7), lng=round(body.lng, 7))
+    req = urllib.request.Request(url, data=_json.dumps(data).encode(), method="POST",
+                                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {tok}"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            out = _json.loads(r.read() or b"{}")
+    except Exception as e:
+        raise HTTPException(502, f"전달 실패: {str(e)[:120]}")
+    return {"ok": True, "id": out.get("id"), "duplicate": bool(out.get("duplicate"))}
 
 
 # 센서 원본 녹화 (알고리즘 조정용, /lab)

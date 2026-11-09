@@ -36,6 +36,10 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
     /// 하루 종일 기록에 넘김: 기록 중 받은 좋은 위치 / 기록 켜고 끔
     var onFix: ((CLLocation) -> Void)?
     var onRecordingChanged: ((Bool) -> Void)?
+    /// 센서로 만든 추정점(터널 등). 보정되면 같은 시각 점으로 다시 넘어옴
+    var onEstimate: ((TrackPoint) -> Void)?
+    /// 하루 종일 기록이 자동으로 켠 운전 기록인지
+    @Published private(set) var isAuto = false
     private let manager = CLLocationManager()
     private var bgSession: CLBackgroundActivitySession?
     private var lastAccepted: TrackPoint?
@@ -153,6 +157,7 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     func start() {
         guard !isRecording else { return }
+        isAuto = false
         store.start(mode: mode)
         lastAccepted = nil
         jumpCandidate = nil
@@ -162,10 +167,24 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
         Task { await store.sync() }
     }
 
+    /// 하루 종일 기록이 켜는 운전 기록 (차 + 충전 중). 이름 앞에 '운전' / '차량 이동'
+    func startAuto(prefix: String) {
+        guard !isRecording else { return }
+        mode = .car
+        store.start(mode: .car, prefix: prefix)
+        isAuto = true
+        lastAccepted = nil
+        jumpCandidate = nil
+        beginRecording()
+        if let l = lastGood, Date().timeIntervalSince(l.timestamp) < 3 { handle(l) }
+        Task { await store.sync() }
+    }
+
     /// 끝낸 기록 이름 반환
     @discardableResult
     func stop() -> String? {
         guard isRecording else { return nil }
+        isAuto = false
         let name = store.active?.name
         manager.allowsBackgroundLocationUpdates = false
         bgSession?.invalidate()
@@ -374,6 +393,7 @@ extension Recorder {
         store.append(p, distanceAdd: add)
         lastAccepted = p
         drSeqs.append(seq)
+        onEstimate?(p)
     }
 
     /// GPS 복귀: 추정점을 보정된 좌표로 바꿔 다시 올림
@@ -386,6 +406,7 @@ extension Recorder {
                        spd: q.spd, hdg: q.hdg, src: "imu", brk: nil)
         }
         store.correct(fixed)
+        fixed.forEach { onEstimate?($0) }
         if let l = fixed.last { lastAccepted = l }
         lastCorrection = c
     }

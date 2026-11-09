@@ -30,11 +30,11 @@ final class TrackStore: ObservableObject {
 
     // MARK: 기록
 
-    func start(mode: TravelMode) {
+    func start(mode: TravelMode, prefix: String? = nil) {
         if activeIndex != nil { return }
         let now = Date()
         let t = LocalTrack(clientId: UUID().uuidString.lowercased(),
-                           name: Fmt.recName(now),
+                           name: prefix.map { "\($0) · " + Fmt.recName(now) } ?? Fmt.recName(now),
                            startedAt: now.timeIntervalSince1970 * 1000,
                            endedAt: nil, mode: mode, serverId: nil, points: [],
                            uploadedSeq: -1, needsPatch: mode != .car, distanceM: 0, renamed: nil)
