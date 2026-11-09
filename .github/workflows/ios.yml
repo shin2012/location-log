@@ -77,6 +77,12 @@ jobs:
                 xcrun simctl io $UDID screenshot "shots/${DEV// /_}-$MODE-$TAB.png" >/dev/null
               done
             done
+            for MP in naver google apple; do
+              xcrun simctl terminate $UDID $BID 2>/dev/null || true
+              xcrun simctl launch $UDID $BID -shotToken "$TOKEN" -shotDay 2026-11-09 -tab timeline -mapProvider $MP >/dev/null
+              sleep 12
+              xcrun simctl io $UDID screenshot "shots/${DEV// /_}-map-$MP.png" >/dev/null
+            done
             xcrun simctl shutdown $UDID
           done
           ls shots
