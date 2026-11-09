@@ -73,7 +73,9 @@ flowchart LR
 | `track` | id, client_id, name, started_at, ended_at, distance_m, n_points, n_est, sent_daily_at |
 | `track_pt` | track_id, seq, ts(UTC), lat, lon, alt, acc, spd, hdg, src(`gps`/`imu`) |
 | `day_pt` | 하루 종일 기록 점: ts(UTC, PK), lat, lon, alt, acc, spd, src(`gps`/`fill`/`trk`…), act(이동 수단) — `server/schema_day.sql` |
-| `day_visit` | 하루 종일 기록 머문 곳: arrive(PK), depart, lat, lon |
+| `day_visit` | 하루 종일 기록 머문 곳: arrive(PK), depart, lat, lon, updated_at(데일리요섭 변경 감지) |
+| `day_act` | 이동 방식이 바뀐 시각: ts(UTC, PK), act(stationary/walk/run/bike/car), conf(0~2) — iOS 동작 기록, 업로드 때마다 7일치 안에서 지난 커서부터 다시 조회 |
+| `day_step` | 1분 걸음: ts(UTC 분 시작, PK), steps, dist_m — iOS 만보계(CMPedometer), 0 걸음 분도 올림. 처음 켜면 2일 거슬러, 한 번에 최대 24시간 |
 
 <details><summary>API</summary>
 
@@ -85,7 +87,7 @@ flowchart LR
 | POST | `/api/tracks/{id}/points` | 점 일괄 저장 |
 | POST | `/api/tracks/{id}/send-daily` | 데일리요섭 보내기 (우선순위 확정 전 503) |
 | POST | `/api/log` | 센서 원본 녹화(실험실) → `logs/` |
-| POST | `/api/day/points`, `/api/day/visits` | 하루 종일 기록 묶음 저장 (ts 기준 REPLACE) |
+| POST | `/api/day/points`, `/api/day/visits`, `/api/day/acts`, `/api/day/steps` | 하루 종일 기록 묶음 저장 (ts 기준 REPLACE) |
 | GET | `/api/day` | 기록 있는 날짜(한국 시각)·점 수 |
 | GET/DELETE | `/api/day/{YYYY-MM-DD}` | 그날 점·머문 곳 / 삭제 |
 
