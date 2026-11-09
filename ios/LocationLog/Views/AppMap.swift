@@ -302,13 +302,8 @@ private struct NaverMapRep: UIViewRepresentable {
         } else {
             v.positionMode = .disabled
         }
-        if !followOn, let f = fit, f.key != c.fitKey, let r = AppMap.region(f.coords) {
-            c.fitKey = f.key
-            let b = NMGLatLngBounds(southWest: NMGLatLng(lat: r.sw.latitude, lng: r.sw.longitude),
-                                    northEast: NMGLatLng(lat: r.ne.latitude, lng: r.ne.longitude))
-            let u = NMFCameraUpdate(fit: b, padding: 40)
-            u.animation = .easeIn
-            v.moveCamera(u)
+        if !followOn, let f = fit, f.key != c.fitKey {
+            c.fit(v, f)
         }
     }
 
@@ -317,6 +312,30 @@ private struct NaverMapRep: UIViewRepresentable {
         var dark: Bool?
         var fitKey: String?
         var follow: Binding<Bool>?
+
+        /// 화면 맞춤. 처음 updateUIView 때는 지도 뷰 크기가 0이라 fit(bounds) 가 먹지 않고
+        /// 카메라가 SDK 기본 위치(네이버 본사·분당)에 남음 → 가운데만 먼저 옮기고, 크기가 잡히면 다시 맞춤.
+        func fit(_ v: NMFMapView, _ f: MapFit, tries: Int = 0) {
+            guard let r = AppMap.region(f.coords) else { return }
+            fitKey = f.key
+            let b = NMGLatLngBounds(southWest: NMGLatLng(lat: r.sw.latitude, lng: r.sw.longitude),
+                                    northEast: NMGLatLng(lat: r.ne.latitude, lng: r.ne.longitude))
+            if v.bounds.width < 10 || v.bounds.height < 10 {
+                if tries == 0 {
+                    v.moveCamera(NMFCameraUpdate(scrollTo: NMGLatLng(lat: (r.sw.latitude + r.ne.latitude) / 2,
+                                                                     lng: (r.sw.longitude + r.ne.longitude) / 2), zoomTo: 15))
+                }
+                guard tries < 60 else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak v] in
+                    guard let self, let v, self.fitKey == f.key, self.follow?.wrappedValue != true else { return }
+                    self.fit(v, f, tries: tries + 1)
+                }
+                return
+            }
+            let u = NMFCameraUpdate(fit: b, padding: 40)
+            u.animation = tries == 0 ? .easeIn : .none
+            v.moveCamera(u)
+        }
 
         func mapView(_ mapView: NMFMapView, cameraWillChangeByReason reason: Int, animated: Bool) {
             if reason == NMFMapChangedByGesture, follow?.wrappedValue == true {
@@ -388,10 +407,8 @@ private struct GoogleMapRep: UIViewRepresentable {
         if followOn, let u = user {
             v.animate(toLocation: u)
             if v.camera.zoom < 14 { v.animate(toZoom: 16) }
-        } else if let f = fit, f.key != c.fitKey, let r = AppMap.region(f.coords) {
-            c.fitKey = f.key
-            let b = GMSCoordinateBounds(coordinate: r.sw, coordinate: r.ne)
-            v.animate(with: GMSCameraUpdate.fit(b, withPadding: 40))
+        } else if let f = fit, f.key != c.fitKey {
+            c.fit(v, f)
         }
     }
 
@@ -399,6 +416,26 @@ private struct GoogleMapRep: UIViewRepresentable {
         var fitKey: String?
         var follow: Binding<Bool>?
         var onTapPin: ((String) -> Void)?
+
+        /// 화면 맞춤 (크기 0일 때는 가운데만 옮기고, 크기가 잡히면 다시 맞춤 — 네이버와 같은 이유)
+        func fit(_ v: GMSMapView, _ f: MapFit, tries: Int = 0) {
+            guard let r = AppMap.region(f.coords) else { return }
+            fitKey = f.key
+            if v.bounds.width < 10 || v.bounds.height < 10 {
+                if tries == 0 {
+                    v.moveCamera(GMSCameraUpdate.setTarget(CLLocationCoordinate2D(latitude: (r.sw.latitude + r.ne.latitude) / 2,
+                                                                                   longitude: (r.sw.longitude + r.ne.longitude) / 2), zoom: 15))
+                }
+                guard tries < 60 else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak v] in
+                    guard let self, let v, self.fitKey == f.key, self.follow?.wrappedValue != true else { return }
+                    self.fit(v, f, tries: tries + 1)
+                }
+                return
+            }
+            let u = GMSCameraUpdate.fit(GMSCoordinateBounds(coordinate: r.sw, coordinate: r.ne), withPadding: 40)
+            if tries == 0 { v.animate(with: u) } else { v.moveCamera(u) }
+        }
 
         func mapView(_ mapView: GMSMapView, willMove gesture: Bool) {
             if gesture, follow?.wrappedValue == true {
