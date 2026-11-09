@@ -9,6 +9,10 @@ on:
         description: "TestFlight에 올리기"
         type: boolean
         default: true
+      shots:
+        description: "시뮬레이터 화면 캡처 (암호화해서 올림)"
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -28,6 +32,56 @@ jobs:
             -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO build 2>&1 | tee build.log | grep -E "error:|warning:|BUILD" || true
           grep -q "BUILD SUCCEEDED" build.log
+
+  shots:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.shots
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | grep -viE "beta|_RC" | sort -V | tail -1)"
+      - name: 빌드 (시뮬레이터)
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild -project LocationLog.xcodeproj -scheme LocationLog -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath $RUNNER_TEMP/dd CODE_SIGNING_ALLOWED=NO build | tail -3
+      - name: 캡처
+        env:
+          TOKEN: ${{ secrets.SILLAGE_APP_TOKEN }}
+        run: |
+          APP=$(ls -d $RUNNER_TEMP/dd/Build/Products/Debug-iphonesimulator/*.app | head -1)
+          BID=kr.b-612.sillage
+          mkdir -p shots
+          xcrun simctl list devices available | grep -E "iPhone|iPad" | head -20
+          for DEV in "iPhone 17 Pro" "iPad Pro 13-inch (M5)" "iPad Air 11-inch (M3)"; do
+            UDID=$(xcrun simctl list devices available | grep -F "$DEV (" | head -1 | grep -oE '[0-9A-F-]{36}') || true
+            [ -z "$UDID" ] && continue
+            xcrun simctl boot $UDID; xcrun simctl bootstatus $UDID -b >/dev/null
+            xcrun simctl install $UDID "$APP"
+            xcrun simctl privacy $UDID grant location-always $BID || true
+            xcrun simctl privacy $UDID grant motion $BID || true
+            xcrun simctl location $UDID set 37.5472,126.9317 || true
+            for MODE in light dark; do
+              xcrun simctl ui $UDID appearance $MODE
+              for TAB in timeline autoCheckin record settings; do
+                xcrun simctl terminate $UDID $BID 2>/dev/null || true
+                xcrun simctl launch $UDID $BID -shotToken "$TOKEN" -shotDay 2026-11-09 -tab $TAB >/dev/null
+                sleep 9
+                xcrun simctl io $UDID screenshot "shots/${DEV// /_}-$MODE-$TAB.png" >/dev/null
+              done
+            done
+            xcrun simctl shutdown $UDID
+          done
+          ls shots
+          tar czf - shots | openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:TOKEN -out shots.tgz.enc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shots-encrypted
+          path: shots.tgz.enc
+          retention-days: 1
 
   testflight:
     needs: build

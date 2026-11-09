@@ -6,7 +6,13 @@ struct TimelineScreen: View {
     @EnvironmentObject var settings: AppSettings
     @ObservedObject private var logger = DayLogger.shared
     @Environment(\.horizontalSizeClass) private var sizeClass
-    @State private var day = Calendar.current.startOfDay(for: Date())
+    @State private var day: Date = {
+        #if DEBUG
+        // CI 화면 캡처용: 실행 인자 -shotDay YYYY-MM-DD
+        if let d = UserDefaults.standard.string(forKey: "shotDay"), let x = DayLogStore.dayFmt.date(from: d) { return x }
+        #endif
+        return Calendar.current.startOfDay(for: Date())
+    }()
     @State private var data: TimelineDay?
     @State private var error: String?
     @State private var loading = false
