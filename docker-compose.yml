@@ -1,21 +1,11 @@
+# 실라쥬 앱 전용 API (웹 화면은 없앰). NPM 호스트 75 (location.b-612.kr) → location-api:8000
 services:
-  web:
-    image: nginx:alpine
-    container_name: location-web
-    restart: unless-stopped
-    volumes:
-      - ./public:/usr/share/nginx/html:ro
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    networks: [npm_network]
-    depends_on: [api]
   api:
     build: ./server
     image: location-api:latest
     container_name: location-api
     restart: unless-stopped
     env_file: .env
-    volumes:
-      - ./logs:/data
     networks: [npm_network]
 
 networks:

@@ -1,4 +1,4 @@
-"""위치 기록 API — location.b-612.kr/api/*
+"""실라쥬(위치 기록 앱) 전용 API — https://location.b-612.kr/app-api/* (Bearer 토큰)
 
 경로(track)와 점(track_pt)을 MariaDB location_log 에 저장. 점은 (track_id, seq) 기준 REPLACE 라서
 같은 점을 다시 보내도 안전하고, 터널 구간 사후 보정값도 같은 seq 로 덮어씀.
@@ -17,15 +17,19 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 app = FastAPI(title="location-log")
-LOG_DIR = Path(os.environ.get("LOG_DIR", "/data"))
 APP_TOKEN = os.environ.get("APP_TOKEN", "")
 
 
-# 네이티브 앱 경로(/app-api/)는 로그인(tinyauth)을 거치지 않으므로 토큰으로 막음.
-# 웹 nginx가 /app-api/ 요청에만 X-App-Gate: 1 을 붙이고, /api/ 요청에서는 지움.
+# 앱 전용 API (웹 화면은 2026-11 에 없앰). 앱은 https://location.b-612.kr/app-api/* 로 부름 → /api/* 로 바꿔 처리.
+# 모든 요청에 Bearer 토큰 필수 (상태 확인 /api/health 만 예외).
 @app.middleware("http")
 async def app_gate(request: Request, call_next):
-    if request.headers.get("x-app-gate") == "1":
+    path = request.scope["path"]
+    if path.startswith("/app-api/"):
+        path = "/api/" + path[len("/app-api/"):]
+        request.scope["path"] = path
+        request.scope["raw_path"] = path.encode()
+    if path != "/api/health":
         if not APP_TOKEN or request.headers.get("authorization") != f"Bearer {APP_TOKEN}":
             return JSONResponse({"detail": "토큰이 맞지 않음"}, status_code=401)
     return await call_next(request)
@@ -86,12 +90,6 @@ def health():
     with db() as cur:
         cur.execute("SELECT 1 AS ok")
         return {"ok": True}
-
-
-@app.get("/api/config")
-def config():
-    return {"naver_map_key": os.environ.get("NCP_MAPS_KEY_ID", ""),
-            "daily_ready": True}
 
 
 class TrackIn(BaseModel):
@@ -509,19 +507,3 @@ def _ac_loop():
 def _ac_start():
     if os.environ.get("AC_LOOP", "1") == "1":
         threading.Thread(target=_ac_loop, daemon=True).start()
-
-
-# 센서 원본 녹화 (알고리즘 조정용, /lab)
-@app.post("/api/log")
-async def post_log(request: Request):
-    body = await request.body()
-    if not body or len(body) > 60 * 1024 * 1024:
-        raise HTTPException(413, "size")
-    try:
-        rows = len(json.loads(body).get("rows", []))
-    except Exception:
-        raise HTTPException(400, "json")
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    name = time.strftime("%Y%m%d-%H%M%S", time.localtime()) + f"-{rows}.json"
-    (LOG_DIR / name).write_bytes(body)
-    return {"name": name, "rows": rows}
