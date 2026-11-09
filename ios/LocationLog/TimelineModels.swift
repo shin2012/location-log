@@ -17,6 +17,7 @@ struct TimelineSummary: Decodable {
 
 struct TimelineItem: Decodable, Identifiable, Hashable {
     let kind: String            // visit | move
+    let checkin: Bool?          // 이름이 스웜 체크인에서 옴
     let start: Double           // epoch ms
     let end: Double
     // 머문 곳
@@ -74,6 +75,30 @@ struct ACPlacePatch: Encodable {
     var radius: Int?
     var enabled: Bool?
     var name: String?
+    var lat: Double?
+    var lon: Double?
+}
+
+struct ACPlaceNew: Encodable {
+    let venueId: String
+    let name: String
+    let lat: Double
+    let lon: Double
+    var radius = 100
+}
+
+/// 장소 추가 후보 = 내가 체크인했던 포스퀘어 장소
+struct ACVenue: Decodable, Identifiable, Hashable {
+    let venueId: String
+    let name: String
+    let category: String?
+    let lat: Double
+    let lon: Double
+    let n: Int
+    let last: Double
+    let distM: Int?
+    let added: Bool
+    var id: String { venueId }
 }
 
 /// GET autocheckin/events

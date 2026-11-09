@@ -5,31 +5,24 @@ import MapKit
 struct MapModeView: View {
     @EnvironmentObject var recorder: Recorder
     @EnvironmentObject var store: TrackStore
-    @State private var camera: MapCameraPosition = .userLocation(fallback: .automatic)
+    @State private var follow = true
 
     var body: some View {
-        Map(position: $camera) {
-            UserAnnotation()
-            if let t = store.active {
-                ForEach(Array(TrackGeometry.runs(t.points).enumerated()), id: \.offset) { _, run in
-                    // GPS 끊김 구간 추정은 주황 점선 (웹판과 같음)
-                    MapPolyline(coordinates: run.coords)
-                        .stroke(run.est ? Palette.warn : Palette.route,
-                                style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round, dash: run.est ? [6, 8] : []))
-                }
-            }
-        }
-        .mapControls { MapScaleView() }
+        AppMap(lines: (store.active.map { TrackGeometry.runs($0.points) } ?? []).map {
+                   // GPS 끊김 구간 추정은 주황 점선
+                   MapLine(coords: $0.coords, color: $0.est ? Palette.warn : Palette.route, width: 5, dashed: $0.est)
+               },
+               showsUser: true, follow: $follow, user: recorder.lastLocation?.coordinate)
         .ignoresSafeArea(edges: .horizontal)
         .overlay(alignment: .top) {
             VStack(alignment: .trailing, spacing: 10) {
                 overlayCard
                 Button {
-                    withAnimation { camera = .userLocation(fallback: .automatic) }
+                    follow = true
                 } label: {
-                    Image(systemName: camera.followsUserLocation ? "location.fill" : "location")
+                    Image(systemName: follow ? "location.fill" : "location")
                         .font(.system(size: 18))
-                        .foregroundStyle(camera.followsUserLocation ? Color.blue : Color.primary)
+                        .foregroundStyle(follow ? Color.blue : Color.primary)
                         .frame(width: 44, height: 44)
                         .background(.ultraThinMaterial, in: Circle())
                         .overlay(Circle().stroke(Palette.line))

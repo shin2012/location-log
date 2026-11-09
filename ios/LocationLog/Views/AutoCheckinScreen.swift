@@ -11,6 +11,8 @@ struct AutoCheckinScreen: View {
     @State private var places: [ACPlace] = []
     @State private var error: String?
     @State private var loading = false
+    @State private var adding = false
+    @State private var deleting: ACPlace?
 
     var body: some View {
         NavigationStack {
@@ -42,7 +44,7 @@ struct AutoCheckinScreen: View {
                 Section {
                     ForEach($places) { $pl in
                         NavigationLink {
-                            PlaceDetailView(place: $pl)
+                            PlaceDetailView(place: $pl) { places.removeAll { $0.id == pl.id } }
                         } label: {
                             LabeledContent {
                                 Text("반경 \(pl.radius)m")
@@ -51,18 +53,36 @@ struct AutoCheckinScreen: View {
                                     .foregroundStyle(pl.enabled == false ? .secondary : .primary)
                             }
                         }
-                        .swipeActions {
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) { deleting = pl } label: { Label("삭제", systemImage: "trash") }
                             Button(pl.enabled == false ? "켜기" : "끄기") { Task { await toggle($pl) } }
                                 .tint(pl.enabled == false ? .green : .gray)
                         }
                     }
+                    Button { adding = true } label: { Label("장소 추가", systemImage: "plus") }
+                        .disabled(settings.token.isEmpty)
                 } header: {
-                    Text("장소")
+                    Text("장소 \(places.count)곳")
                 } footer: {
-                    Text("밀어서 켜고 끌 수 있습니다. 장소 추가는 아직 서버에서 합니다.")
+                    Text("밀어서 끄거나 지울 수 있습니다. iOS는 앱 하나가 장소 20곳까지만 감시합니다(자동 기록이 1곳 사용).")
                 }
             }
             .navigationTitle("자동 체크인")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { adding = true } label: { Image(systemName: "plus") }
+                        .accessibilityLabel("장소 추가")
+                        .disabled(settings.token.isEmpty)
+                }
+            }
+            .sheet(isPresented: $adding) {
+                AddPlaceSheet { pl in places.append(pl); places.sort { $0.name < $1.name } }
+            }
+            .confirmationDialog("\"\(deleting?.name ?? "")\" 장소를 지울까요?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                                titleVisibility: .visible) {
+                Button("삭제", role: .destructive) { if let d = deleting { Task { await delete(d) } } }
+                Button("취소", role: .cancel) {}
+            } message: { Text("지난 들어옴·나감 기록은 남습니다.") }
             .task { await load() }
             .refreshable { await load() }
         }
@@ -81,6 +101,18 @@ struct AutoCheckinScreen: View {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    private func delete(_ pl: ACPlace) async {
+        do {
+            try await API.acDelete(pl.venueId)
+            places.removeAll { $0.id == pl.id }
+            await auto.refreshPlaces(force: true)
+            toaster.show("\(pl.name) 삭제했습니다")
+        } catch {
+            toaster.show("지우지 못했습니다: \(error.localizedDescription)")
+        }
+        deleting = nil
     }
 
     private func toggle(_ pl: Binding<ACPlace>) async {
@@ -125,27 +157,35 @@ private struct EventRow: View {
     }
 }
 
-/// 장소 자세히: 지도에 반경 원, 반경·켜기 바꾸기
+/// 장소 자세히: 지도에 반경 원, 이름·반경·중심·켜기 바꾸기, 삭제
 struct PlaceDetailView: View {
     @Binding var place: ACPlace
+    var onDelete: () -> Void = {}
     @EnvironmentObject var toaster: Toaster
+    @Environment(\.dismiss) private var dismiss
     @State private var radius: Double = 100
+    @State private var name = ""
     @State private var saving = false
+    @State private var confirmDelete = false
+    @State private var confirmMove = false
 
     var body: some View {
         List {
             Section {
-                Map(initialPosition: .region(MKCoordinateRegion(center: place.coordinate, latitudinalMeters: max(600, radius * 5),
-                                                                longitudinalMeters: max(600, radius * 5)))) {
-                    MapCircle(center: place.coordinate, radius: radius)
-                        .foregroundStyle(.blue.opacity(0.2))
-                        .stroke(.blue, lineWidth: 2)
-                    Marker(place.name, coordinate: place.coordinate)
-                }
-                .frame(height: 260)
-                .listRowInsets(EdgeInsets())
+                AppMap(circles: [MapCircleArea(center: place.coordinate, radius: radius)],
+                       fit: MapFit(key: "\(place.lat),\(place.lon),\(Int(radius / 50))",
+                                   coords: ring(place.coordinate, radius * 1.6)),
+                       showsUser: true)
+                    .frame(height: 280)
+                    .listRowInsets(EdgeInsets())
             }
             Section {
+                TextField("이름", text: $name)
+                    .submitLabel(.done)
+                    .onSubmit {
+                        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !n.isEmpty && n != place.name { Task { await save(ACPlacePatch(name: n)) } }
+                    }
                 Toggle("감시", isOn: Binding(get: { place.enabled ?? true }, set: { v in Task { await save(ACPlacePatch(enabled: v)) } }))
                 VStack(alignment: .leading) {
                     LabeledContent("반경", value: "\(Int(radius))m")
@@ -157,14 +197,54 @@ struct PlaceDetailView: View {
                 Text("반경이 너무 작으면 건물 안 GPS 흔들림으로 들어오고 나가는 기록이 생기고, 너무 크면 근처를 지나가기만 해도 잡힙니다. 보통 100~150m.")
             }
             Section {
+                Button("중심을 지금 위치로 옮기기", systemImage: "location") { confirmMove = true }
                 LabeledContent("좌표", value: String(format: "%.5f, %.5f", place.lat, place.lon))
                 LabeledContent("포스퀘어 장소", value: place.venueId).font(.footnote)
+            } footer: {
+                Text("감시 중심은 이 장소에서 실제로 머무는 자리입니다. 그 장소 안에 있을 때 누르세요.")
+            }
+            Section {
+                Button("장소 삭제", role: .destructive) { confirmDelete = true }
             }
         }
         .navigationTitle(place.name)
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { radius = Double(place.radius) }
+        .onAppear { radius = Double(place.radius); name = place.name }
         .disabled(saving)
+        .confirmationDialog("중심을 지금 위치로 옮길까요?", isPresented: $confirmMove, titleVisibility: .visible) {
+            Button("옮기기") { Task { await moveHere() } }
+            Button("취소", role: .cancel) {}
+        }
+        .confirmationDialog("\"\(place.name)\" 장소를 지울까요?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("삭제", role: .destructive) { Task { await delete() } }
+            Button("취소", role: .cancel) {}
+        } message: { Text("지난 들어옴·나감 기록은 남습니다.") }
+    }
+
+    /// 원이 화면에 다 들어오게 맞출 네 점
+    private func ring(_ c: CLLocationCoordinate2D, _ r: Double) -> [CLLocationCoordinate2D] {
+        let dLat = r / 111_000, dLon = r / (111_000 * cos(c.latitude * .pi / 180))
+        return [.init(latitude: c.latitude - dLat, longitude: c.longitude - dLon), .init(latitude: c.latitude + dLat, longitude: c.longitude + dLon)]
+    }
+
+    private func moveHere() async {
+        guard let l = DayLogger.shared.currentLocation(), l.horizontalAccuracy >= 0, l.horizontalAccuracy < 100 else {
+            toaster.show("지금 위치가 정확하지 않습니다 (100m 안으로 잡힐 때 다시)")
+            return
+        }
+        await save(ACPlacePatch(lat: l.coordinate.latitude, lon: l.coordinate.longitude))
+    }
+
+    private func delete() async {
+        do {
+            try await API.acDelete(place.venueId)
+            await AutoCheckin.shared.refreshPlaces(force: true)
+            toaster.show("\(place.name) 삭제했습니다")
+            onDelete()
+            dismiss()
+        } catch {
+            toaster.show("지우지 못했습니다: \(error.localizedDescription)")
+        }
     }
 
     private func save(_ patch: ACPlacePatch) async {
@@ -173,11 +253,102 @@ struct PlaceDetailView: View {
         do {
             place = try await API.acPatch(place.venueId, patch)
             radius = Double(place.radius)
+            name = place.name
             await AutoCheckin.shared.refreshPlaces(force: true)
             toaster.show("저장했습니다")
         } catch {
             radius = Double(place.radius)
+            name = place.name
             toaster.show("저장하지 못했습니다: \(error.localizedDescription)")
+        }
+    }
+}
+
+/// 장소 추가: 내가 체크인했던 곳 중 고르기 (가까운 순 / 이름 검색)
+struct AddPlaceSheet: View {
+    let onAdded: (ACPlace) -> Void
+    @EnvironmentObject var toaster: Toaster
+    @Environment(\.dismiss) private var dismiss
+    @State private var q = ""
+    @State private var venues: [ACVenue] = []
+    @State private var loading = false
+    @State private var error: String?
+    @State private var busy: String?
+
+    private var here: CLLocationCoordinate2D? { DayLogger.shared.currentLocation()?.coordinate }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(venues) { v in
+                        Button { Task { await add(v) } } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(v.name).foregroundStyle(v.added ? .secondary : .primary)
+                                    Text(sub(v)).font(.footnote).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if busy == v.id { ProgressView() }
+                                else if v.added { Text("등록됨").font(.footnote).foregroundStyle(.secondary) }
+                                else { Image(systemName: "plus.circle").foregroundStyle(Color.accentColor) }
+                            }
+                        }
+                        .disabled(v.added || busy != nil)
+                    }
+                    if venues.isEmpty && !loading {
+                        Text(error ?? (q.isEmpty ? "근처에 체크인했던 곳이 없습니다. 이름으로 찾아 보세요." : "찾는 장소가 없습니다"))
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text(q.isEmpty ? "근처에서 체크인했던 곳" : "검색 결과")
+                } footer: {
+                    Text("스웜에 체크인했던 장소만 고를 수 있습니다(자동 체크인이 그 장소로 체크인을 만듦). 감시 중심은 그 장소에서 실제로 머물렀던 자리로 맞춥니다.")
+                }
+            }
+            .overlay { if loading && venues.isEmpty { ProgressView() } }
+            .searchable(text: $q, placement: .navigationBarDrawer(displayMode: .always), prompt: "장소 이름")
+            .task(id: q) {
+                try? await Task.sleep(for: .milliseconds(q.isEmpty ? 0 : 350))
+                if !Task.isCancelled { await search() }
+            }
+            .navigationTitle("장소 추가")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } } }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func sub(_ v: ACVenue) -> String {
+        var parts: [String] = []
+        if let c = v.category, !c.isEmpty { parts.append(c) }
+        if let d = v.distM { parts.append(d < 1000 ? "\(d)m" : String(format: "%.1fkm", Double(d) / 1000)) }
+        parts.append("체크인 \(v.n)번")
+        return parts.joined(separator: " · ")
+    }
+
+    private func search() async {
+        loading = true
+        defer { loading = false }
+        do {
+            venues = try await API.acVenues(q: q.trimmingCharacters(in: .whitespaces), near: here)
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func add(_ v: ACVenue) async {
+        busy = v.id
+        defer { busy = nil }
+        do {
+            let p = try await API.acAdd(ACPlaceNew(venueId: v.venueId, name: v.name, lat: v.lat, lon: v.lon))
+            await AutoCheckin.shared.refreshPlaces(force: true)
+            onAdded(p)
+            toaster.show("\(v.name) 추가했습니다")
+            dismiss()
+        } catch {
+            toaster.show("추가하지 못했습니다: \(error.localizedDescription)")
         }
     }
 }

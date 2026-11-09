@@ -134,6 +134,7 @@ final class DayLogStore: ObservableObject {
 
     /// 보관 기간 지난 날짜 지움 (서버에 다 올라간 것만. 토큰 없으면 기기만 쓰므로 기간만 봄)
     func prune(keepDays: Int) {
+        guard keepDays > 0 else { return }   // 0 = 무제한
         let cut = Self.dayKey((Date().timeIntervalSince1970 - Double(keepDays) * 86400) * 1000)
         let local = AppSettings.shared.token.isEmpty
         for day in days() where day < cut {

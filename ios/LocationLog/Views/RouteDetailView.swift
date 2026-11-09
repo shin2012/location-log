@@ -8,24 +8,12 @@ struct RouteDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var points: [TrackPoint] = []
     @State private var info = "불러오는 중…"
-    @State private var camera: MapCameraPosition = .automatic
 
     var body: some View {
-            Map(position: $camera) {
-                ForEach(Array(TrackGeometry.runs(points).enumerated()), id: \.offset) { _, run in
-                    // GPS 끊김 구간 추정은 주황 점선 (웹판과 같음)
-                    MapPolyline(coordinates: run.coords)
-                        .stroke(run.est ? Palette.warn : Palette.route,
-                                style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round, dash: run.est ? [6, 8] : []))
-                }
-                if let f = points.first {
-                    Marker("출발", coordinate: f.coordinate).tint(.green)
-                }
-                if let l = points.last, points.count > 1 {
-                    Marker("도착", coordinate: l.coordinate).tint(.red)
-                }
-            }
-            .mapControls { MapScaleView(); MapCompass() }
+            AppMap(lines: TrackGeometry.runs(points).map { MapLine(coords: $0.coords, color: $0.est ? Palette.warn : Palette.route, dashed: $0.est) },
+                   pins: [points.first.map { MapPin(id: "s", coord: $0.coordinate, title: "출발", color: .green) },
+                          points.count > 1 ? points.last.map { MapPin(id: "e", coord: $0.coordinate, title: "도착", color: .red) } : nil].compactMap { $0 },
+                   fit: points.isEmpty ? nil : MapFit(key: "\(item.id)-\(points.count)", coords: points.map(\.coordinate)))
             .safeAreaInset(edge: .bottom) {
                 Text(info)
                     .font(.system(size: 13))
@@ -71,16 +59,8 @@ struct RouteDetailView: View {
         return "\(Fmt.dateKo(start)) \(Fmt.hm(start))–\(Fmt.hm(e)) · \(String(format: "%.2f", dist / 1000))km · \(Fmt.durKo(e - start)) · \(n.formatted())점"
     }
 
-    private func fit() {
-        guard !points.isEmpty else { return }
-        var rect = MKMapRect.null
-        for p in points {
-            let mp = MKMapPoint(p.coordinate)
-            rect = rect.union(MKMapRect(x: mp.x, y: mp.y, width: 0, height: 0))
-        }
-        let pad = max(rect.width, rect.height) * 0.15 + 500
-        camera = .rect(rect.insetBy(dx: -pad, dy: -pad))
-    }
+    private func fit() {}   // AppMap 이 fit 키로 맞춤
+
 }
 
 

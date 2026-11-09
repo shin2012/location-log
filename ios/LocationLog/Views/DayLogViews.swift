@@ -11,6 +11,8 @@ struct SettingsScreen: View {
     @ObservedObject private var settings = DaySettings.shared
     @ObservedObject private var carplay = CarPlayWatcher.shared
     @AppStorage("keepAwake") private var keepAwake = true
+    @AppStorage("mapProvider") private var mapProvider: MapProvider = .naver
+    @ObservedObject private var maps = MapServices.shared
 
     var body: some View {
         NavigationStack {
@@ -36,6 +38,17 @@ struct SettingsScreen: View {
                     Toggle(isOn: $keepAwake) { Label("경로 기록 중 화면 켜 두기", systemImage: "sun.max") }
                         .onChange(of: keepAwake) { _, _ in recorder.applyIdleTimer() }
                 } header: { Text("기록") }
+
+                Section {
+                    Picker(selection: $mapProvider) {
+                        ForEach(MapProvider.allCases) { Text($0.label).tag($0) }
+                    } label: { Label("지도", systemImage: "map") }
+                    if mapProvider == .naver && maps.naverFailed {
+                        Text("네이버 지도 인증 실패 — 구글 지도로 보여 줍니다 (\(maps.naverError ?? ""))").font(.footnote).foregroundStyle(.orange)
+                    }
+                } header: { Text("화면") } footer: {
+                    Text("네이버는 국내에서만 쓰고, 국외 지역이거나 네이버가 안 되면 구글 지도로 바꿔 보여 줍니다.")
+                }
 
                 Section {
                     ServerConnectionRow()
@@ -158,7 +171,7 @@ struct AutoRecordSettingsView: View {
             }
 
             Section {
-                NavigationLink("날짜별 위치 점") { DayHistoryView() }
+                NavigationLink("날짜별 위치 원본") { DayHistoryView() }
             }
         }
         .navigationTitle("자동 기록")
@@ -298,7 +311,7 @@ struct UploadSettingsView: View {
         Form {
             Section {
                 Picker("올리는 간격", selection: p.uploadMinutes) {
-                    ForEach([15, 30, 60, 180], id: \.self) { Text($0 < 60 ? "\($0)분" : "\($0 / 60)시간").tag($0) }
+                    ForEach([1, 5, 15, 30, 60, 180], id: \.self) { Text($0 < 60 ? "\($0)분" : "\($0 / 60)시간").tag($0) }
                 }
                 Toggle("Wi-Fi에서만 올리기", isOn: p.wifiOnly)
                 Button("지금 올리기") {
@@ -310,9 +323,10 @@ struct UploadSettingsView: View {
                 .disabled(AppSettings.shared.token.isEmpty)
                 Picker("이 기기 보관", selection: p.keepDays) {
                     ForEach([30, 90, 365], id: \.self) { Text("\($0)일").tag($0) }
+                    Text("무제한").tag(0)
                 }
             } footer: {
-                Text("점마다 보내지 않고 모아서 올립니다(통신도 배터리를 씀). 서버에 올라간 기록만 보관 기간이 지나면 이 기기에서 지웁니다.")
+                Text("점마다 보내지 않고 모아서 올립니다(통신도 배터리를 씀). 간격이 짧을수록 서버에 빨리 반영되지만 배터리를 조금 더 씁니다 — 앱이 백그라운드에서 깨어 있을 때만 그 간격대로 올라갑니다. 서버에 올라간 기록만 보관 기간이 지나면 이 기기에서 지웁니다(무제한이면 지우지 않음).")
             }
         }
         .navigationTitle("올리기·보관")
@@ -432,7 +446,7 @@ struct DayHistoryView: View {
                 }
             }
         }
-        .navigationTitle("날짜별 위치 점")
+        .navigationTitle("날짜별 위치 원본")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .refreshable { await load() }
@@ -453,7 +467,6 @@ struct DayMapView: View {
     @State private var points: [DayPoint] = []
     @State private var visits: [DayVisitRec] = []
     @State private var info = "불러오는 중…"
-    @State private var camera: MapCameraPosition = .automatic
     @State private var confirmDelete = false
 
     /// 지도 그리기용: 메운 구간은 점선(추정과 같은 모양)
@@ -465,18 +478,11 @@ struct DayMapView: View {
     }
 
     var body: some View {
-        Map(position: $camera) {
-            ForEach(Array(TrackGeometry.runs(trackPoints).enumerated()), id: \.offset) { _, run in
-                MapPolyline(coordinates: run.coords)
-                    .stroke(run.est ? Palette.warn : Palette.route,
-                            style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round, dash: run.est ? [6, 8] : []))
-            }
-            ForEach(visits, id: \.arrive) { v in
-                Marker(visitLabel(v), systemImage: "house.fill", coordinate: .init(latitude: v.lat, longitude: v.lon))
-                    .tint(.purple)
-            }
-        }
-        .mapControls { MapScaleView(); MapCompass() }
+        // 머문 곳 = 보라 핀(머문 시각), 선 = 저장된 위치 점을 이은 것 (주황 점선 = 출발 구간 메움)
+        AppMap(lines: TrackGeometry.runs(trackPoints).map { MapLine(coords: $0.coords, color: $0.est ? Palette.warn : Palette.route, dashed: $0.est) },
+               pins: visits.map { v in MapPin(id: "\(v.arrive)", coord: .init(latitude: v.lat, longitude: v.lon),
+                                              title: "머묾 " + visitLabel(v), color: .purple) },
+               fit: points.isEmpty ? nil : MapFit(key: "\(day)-\(points.count)", coords: points.map { .init(latitude: $0.lat, longitude: $0.lon) }))
         .safeAreaInset(edge: .bottom) {
             Text(info)
                 .font(.system(size: 13))
@@ -487,7 +493,7 @@ struct DayMapView: View {
                 .padding(.vertical, 12)
                 .background(Palette.bg)
         }
-        .navigationTitle(day)
+        .navigationTitle("위치 원본 · " + day)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -538,14 +544,8 @@ struct DayMapView: View {
         }
     }
 
-    private func fit() {
-        var rect = MKMapRect.null
-        for p in points { let mp = MKMapPoint(p.coordinate); rect = rect.union(MKMapRect(x: mp.x, y: mp.y, width: 0, height: 0)) }
-        for v in visits { let mp = MKMapPoint(.init(latitude: v.lat, longitude: v.lon)); rect = rect.union(MKMapRect(x: mp.x, y: mp.y, width: 0, height: 0)) }
-        guard !rect.isNull else { return }
-        let pad = max(rect.width, rect.height) * 0.15 + 500
-        camera = .rect(rect.insetBy(dx: -pad, dy: -pad))
-    }
+    private func fit() {}   // AppMap 이 fit 키로 맞춤
+
 }
 
 extension DayPoint {

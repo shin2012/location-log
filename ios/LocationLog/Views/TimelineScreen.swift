@@ -20,7 +20,7 @@ struct TimelineScreen: View {
     @State private var detail: TimelineItem?
     @State private var picking = false
     @State private var showPoints = false
-    @State private var camera: MapCameraPosition = .automatic
+    @State private var fitReq: MapFit?
 
     private var key: String { DayLogStore.dayFmt.string(from: day) }
     private var isToday: Bool { Calendar.current.isDateInToday(day) }
@@ -125,21 +125,17 @@ struct TimelineScreen: View {
     // MARK: 지도
 
     private var map: some View {
-        Map(position: $camera) {
-            ForEach(data?.items.filter { !$0.isVisit } ?? []) { it in
-                MapPolyline(coordinates: it.coords)
-                    .stroke(color(it).opacity(selected == nil || selected == it ? 1 : 0.3),
-                            style: StrokeStyle(lineWidth: selected == it ? 6 : 4, lineCap: .round, lineJoin: .round,
-                                               dash: it.mode == "car" && it.drove != true ? [8, 6] : []))
-            }
-            ForEach(data?.items.filter(\.isVisit) ?? []) { it in
-                if let c = it.center {
-                    Marker(it.name ?? Fmt.hm(it.start), systemImage: "mappin", coordinate: c)
-                        .tint(selected == it ? .red : .purple)
-                }
-            }
-        }
-        .mapControls { MapScaleView(); MapCompass() }
+        let items = data?.items ?? []
+        return AppMap(
+            lines: items.filter { !$0.isVisit }.map { it in
+                MapLine(coords: it.coords, color: color(it).opacity(selected == nil || selected == it ? 1 : 0.35),
+                        width: selected == it ? 6 : 4, dashed: it.mode == "car" && it.drove != true)
+            },
+            pins: items.filter(\.isVisit).compactMap { it in
+                it.center.map { MapPin(id: it.id, coord: $0, title: it.name ?? Fmt.hm(it.start), color: selected == it ? .red : .purple) }
+            },
+            fit: fitReq,
+            onTapPin: { id in if let it = items.first(where: { $0.id == id }) { select(it) } })
     }
 
     private func color(_ it: TimelineItem) -> Color {
@@ -166,7 +162,7 @@ struct TimelineScreen: View {
         ToolbarItem(placement: .topBarLeading) {
             Menu {
                 if !isToday { Button("오늘로", systemImage: "arrow.uturn.backward") { day = Calendar.current.startOfDay(for: Date()) } }
-                Button("이 날 위치 점 보기", systemImage: "point.topleft.down.to.point.bottomright.curvepath") { showPoints = true }
+                Button("위치 원본 보기", systemImage: "point.topleft.down.to.point.bottomright.curvepath") { showPoints = true }
             } label: { Image(systemName: "ellipsis.circle") }
             .accessibilityLabel("더 보기")
         }
@@ -192,7 +188,7 @@ struct TimelineScreen: View {
     private func select(_ it: TimelineItem) {
         if selected == it { detail = it; return }
         selected = it
-        withAnimation { fit(it.isVisit ? (it.center.map { [$0] } ?? []) : it.coords) }
+        fit(it.isVisit ? (it.center.map { [$0] } ?? []) : it.coords)
     }
 
     // MARK: 불러오기
@@ -214,10 +210,7 @@ struct TimelineScreen: View {
 
     private func fit(_ cs: [CLLocationCoordinate2D]) {
         guard !cs.isEmpty else { return }
-        var rect = MKMapRect.null
-        for c in cs { let p = MKMapPoint(c); rect = rect.union(MKMapRect(x: p.x, y: p.y, width: 0, height: 0)) }
-        let pad = max(rect.width, rect.height) * 0.2 + 400
-        camera = .rect(rect.insetBy(dx: -pad, dy: -pad))
+        fitReq = MapFit(key: "\(key)-\(selected?.id ?? "all")", coords: cs)
     }
 }
 

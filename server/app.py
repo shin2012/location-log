@@ -360,7 +360,11 @@ def day_timeline(date: str):
         cps = cur.fetchall()
         cur.execute("SELECT name, lat, lon, radius FROM auto_place")
         places = cur.fetchall()
-    out = TL.build_items(a, b, vs, pts, acts, steps, cps, places)
+        cur.execute("SELECT FROM_UNIXTIME(FSQ_UNIXTIME) AS ts, VENUE AS name, LAT+0 AS lat, LNG+0 AS lon FROM swarm.FSQ_Swarm "
+                    "WHERE FSQ_UNIXTIME BETWEEN UNIX_TIMESTAMP(%s) - 43200 AND UNIX_TIMESTAMP(%s) ORDER BY FSQ_UNIXTIME",
+                    (a, b))
+        cks = [{**c, "lat": float(c["lat"]), "lon": float(c["lon"])} for c in cur.fetchall()]
+    out = TL.build_items(a, b, vs, pts, acts, steps, cps, places, cks)
     for it in out["items"]:
         it["start"], it["end"] = dt_to_ms(it["start"]), dt_to_ms(it["end"])
     return {"date": date, **out}
@@ -448,12 +452,93 @@ class PlacePatch(BaseModel):
     radius: int | None = Field(default=None, ge=50, le=500)
     enabled: bool | None = None
     name: str | None = Field(default=None, min_length=1, max_length=100)
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lon: float | None = Field(default=None, ge=-180, le=180)
+
+
+class PlaceNew(BaseModel):
+    venue_id: str = Field(min_length=1, max_length=40)
+    name: str = Field(min_length=1, max_length=100)
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    radius: int = Field(default=100, ge=50, le=500)
+
+
+def _stay_center(cur, lat: float, lon: float) -> tuple[float, float, int]:
+    """장소 좌표 200m 안 실라쥬 머문 곳들의 가운데 (실제 머무는 자리). 없으면 원래 좌표."""
+    d = 0.0018
+    cur.execute("SELECT lat, lon FROM day_visit WHERE lat BETWEEN %s AND %s AND lon BETWEEN %s AND %s",
+                (lat - d, lat + d, lon - d * 1.3, lon + d * 1.3))
+    vs = [(r["lat"], r["lon"]) for r in cur.fetchall() if TL.hav_km((lat, lon), (r["lat"], r["lon"])) <= 0.2]
+    if not vs:
+        return lat, lon, 0
+    vs.sort()
+    la = sorted(v[0] for v in vs)[len(vs) // 2]
+    lo = sorted(v[1] for v in vs)[len(vs) // 2]
+    return la, lo, len(vs)
+
+
+@app.get("/api/autocheckin/venues")
+def ac_venues(lat: float | None = None, lon: float | None = None, q: str = "", limit: int = 30):
+    """장소 추가 후보: 내가 체크인했던 포스퀘어 장소 (이름 검색 또는 가까운 순). 이미 등록된 곳은 added=true."""
+    limit = max(1, min(limit, 50))
+    with db() as cur:
+        args: list = []
+        where = ""
+        if q.strip():
+            where = "WHERE VENUE LIKE %s"
+            args.append(f"%{q.strip()}%")
+        elif lat is not None and lon is not None:
+            where = "WHERE LAT+0 BETWEEN %s AND %s AND LNG+0 BETWEEN %s AND %s"
+            args += [lat - 0.02, lat + 0.02, lon - 0.025, lon + 0.025]
+        cur.execute(f"SELECT FSQ_VENUEID AS venue_id, MAX(VENUE) AS name, MAX(CATEGORY) AS category, "
+                    f"SUBSTRING_INDEX(GROUP_CONCAT(LAT ORDER BY FSQ_UNIXTIME DESC), ',', 1)+0 AS lat, "
+                    f"SUBSTRING_INDEX(GROUP_CONCAT(LNG ORDER BY FSQ_UNIXTIME DESC), ',', 1)+0 AS lon, "
+                    f"COUNT(*) AS n, MAX(FSQ_UNIXTIME) AS last FROM swarm.FSQ_Swarm {where} "
+                    f"GROUP BY FSQ_VENUEID ORDER BY n DESC LIMIT 400", args)
+        rows = cur.fetchall()
+        cur.execute("SELECT venue_id FROM auto_place")
+        added = {r["venue_id"] for r in cur.fetchall()}
+    for r in rows:
+        r["lat"], r["lon"] = float(r["lat"]), float(r["lon"])
+        r["dist_m"] = round(TL.hav_km((lat, lon), (r["lat"], r["lon"])) * 1000) if lat is not None and lon is not None else None
+        r["added"] = r["venue_id"] in added
+        r["last"] = int(r["last"]) * 1000
+    if not q.strip() and lat is not None and lon is not None:
+        rows = [r for r in rows if r["dist_m"] <= 1500]
+        rows.sort(key=lambda r: (r["dist_m"] // 100, -r["n"]))
+    return rows[:limit]
+
+
+@app.post("/api/autocheckin/places")
+def ac_place_add(body: PlaceNew, center: int = 1):
+    """장소 추가. center=1 이면 감시 중심을 실제로 머물던 자리(실라쥬 머문 곳)로 옮김."""
+    with db() as cur:
+        cur.execute("SELECT 1 FROM auto_place WHERE venue_id=%s", (body.venue_id,))
+        if cur.fetchone():
+            raise HTTPException(409, "이미 등록된 장소")
+        la, lo, n = _stay_center(cur, body.lat, body.lon) if center else (body.lat, body.lon, 0)
+        cur.execute("INSERT INTO auto_place (venue_id, name, lat, lon, radius, enabled) VALUES (%s,%s,%s,%s,%s,1)",
+                    (body.venue_id, body.name, la, lo, body.radius))
+        cur.execute("SELECT venue_id, name, lat, lon, radius, enabled FROM auto_place WHERE venue_id=%s", (body.venue_id,))
+        r = cur.fetchone()
+    return {**r, "enabled": bool(r["enabled"]), "centered_from": n}
+
+
+@app.delete("/api/autocheckin/places/{venue_id}")
+def ac_place_delete(venue_id: str):
+    """장소 삭제 (지난 들어옴·나감 기록은 남음)"""
+    with db() as cur:
+        n = cur.execute("DELETE FROM auto_place WHERE venue_id=%s", (venue_id,))
+    if not n:
+        raise HTTPException(404, "없는 장소")
+    return {"ok": True}
 
 
 @app.patch("/api/autocheckin/places/{venue_id}")
 def ac_place_patch(venue_id: str, body: PlacePatch):
     sets, args = [], []
-    for k in ("radius", "enabled", "name"):
+    for k in ("radius", "enabled", "name", "lat", "lon"):
         v = getattr(body, k)
         if v is not None:
             sets.append(f"{k}=%s")

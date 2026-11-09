@@ -1,4 +1,5 @@
 import Foundation
+import CoreLocation
 
 struct APIError: LocalizedError {
     let message: String
@@ -79,6 +80,18 @@ enum API {
     static func acPlaces() async throws -> [ACPlace] { try await send("GET", "autocheckin/places?all=1") }
     static func acPatch(_ venueId: String, _ body: ACPlacePatch) async throws -> ACPlace {
         try await send("PATCH", "autocheckin/places/\(venueId)", body: body)
+    }
+    static func acAdd(_ body: ACPlaceNew) async throws -> ACPlace { try await send("POST", "autocheckin/places", body: body) }
+    static func acDelete(_ venueId: String) async throws { let _: OKResponse = try await send("DELETE", "autocheckin/places/\(venueId)") }
+    static func acVenues(q: String, near: CLLocationCoordinate2D?) async throws -> [ACVenue] {
+        var c = URLComponents()
+        c.queryItems = [URLQueryItem(name: "limit", value: "40")]
+        if !q.isEmpty { c.queryItems?.append(URLQueryItem(name: "q", value: q)) }
+        if let n = near {
+            c.queryItems? += [URLQueryItem(name: "lat", value: String(n.latitude)), URLQueryItem(name: "lon", value: String(n.longitude))]
+        }
+        let qs = (c.percentEncodedQuery ?? "").replacingOccurrences(of: "+", with: "%2B")
+        return try await send("GET", "autocheckin/venues?" + qs)
     }
     static func acEvents(days: Int = 7) async throws -> ACEvents { try await send("GET", "autocheckin/events?days=\(days)") }
 

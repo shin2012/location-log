@@ -14,6 +14,7 @@ struct LocationLogApp: App {
         _recorder = StateObject(wrappedValue: r)
         // 하루 종일 기록: 위치 알림으로 앱이 백그라운드에서 다시 켜져도 여기서 이어짐
         DayLogger.shared.boot(recorder: r)
+        MapServices.shared.boot()
         #if DEBUG
         // CI 화면 캡처용: 실행 인자 -shotToken <토큰> (Debug 빌드에서만)
         if let t = UserDefaults.standard.string(forKey: "shotToken"), !t.isEmpty { AppSettings.shared.token = t }

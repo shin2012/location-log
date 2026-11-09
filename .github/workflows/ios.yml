@@ -14,6 +14,10 @@ on:
         type: boolean
         default: false
 
+env:
+  NAVER_MAP_KEY_ID: ${{ secrets.NAVER_MAP_KEY_ID }}
+  GOOGLE_MAPS_KEY: ${{ secrets.GOOGLE_MAPS_KEY }}
+
 jobs:
   build:
     runs-on: macos-26
@@ -30,7 +34,7 @@ jobs:
           set -o pipefail
           xcodebuild -project LocationLog.xcodeproj -scheme LocationLog \
             -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
-            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee build.log | grep -E "error:|warning:|BUILD" || true
+            CODE_SIGNING_ALLOWED=NO NAVER_MAP_KEY_ID="$NAVER_MAP_KEY_ID" GOOGLE_MAPS_KEY="$GOOGLE_MAPS_KEY" build 2>&1 | tee build.log | grep -E "error:|warning:|BUILD" || true
           grep -q "BUILD SUCCEEDED" build.log
 
   shots:
@@ -47,7 +51,7 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild -project LocationLog.xcodeproj -scheme LocationLog -configuration Debug -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' -derivedDataPath $RUNNER_TEMP/dd CODE_SIGNING_ALLOWED=NO build | tail -3
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath $RUNNER_TEMP/dd CODE_SIGNING_ALLOWED=NO NAVER_MAP_KEY_ID="$NAVER_MAP_KEY_ID" GOOGLE_MAPS_KEY="$GOOGLE_MAPS_KEY" build | tail -3
       - name: 캡처
         env:
           TOKEN: ${{ secrets.SILLAGE_APP_TOKEN }}
@@ -110,6 +114,7 @@ jobs:
             -destination 'generic/platform=iOS' -archivePath $RUNNER_TEMP/LocationLog.xcarchive \
             DEVELOPMENT_TEAM=$TEAM_ID CODE_SIGN_STYLE=Automatic \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            NAVER_MAP_KEY_ID="$NAVER_MAP_KEY_ID" GOOGLE_MAPS_KEY="$GOOGLE_MAPS_KEY" \
             -allowProvisioningUpdates \
             -authenticationKeyPath ~/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
             -authenticationKeyID $ASC_KEY_ID -authenticationKeyIssuerID $ASC_ISSUER_ID \

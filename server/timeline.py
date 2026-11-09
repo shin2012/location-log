@@ -1,12 +1,13 @@
 """하루 타임라인 (앱 '타임라인' 탭): 머문 곳과 이동을 시간순으로.
 
-데일리요섭 app/sillage.py 와 같은 규칙 (머문 곳 합치기 300m·10분, 머문 곳 밖 점 묶음 = 이동, 15분 끊기면 나눔).
+데일리요섭 app/sillage.py 와 같은 규칙 (머문 곳 합치기 100m·10분, 머문 곳 밖 점 묶음 = 이동, 15분 끊기면 나눔).
 DB 를 읽는 부분(build)과 계산(순수 함수)을 나눠 시험하기 쉽게 함. 시각은 모두 UTC naive.
 """
 import math
 from datetime import datetime, timedelta
 
-MERGE_KM = 0.3
+MERGE_KM = 0.1      # 같은 곳 (300m 였을 때 회사 옆 230m 식당 점심이 회사로 합쳐짐)
+INSIDE_KM = 0.2     # 머문 곳 안 점으로 볼 거리 (건물 안 GPS 흔들림)
 MERGE_GAP = timedelta(minutes=10)
 RUN_GAP = timedelta(minutes=15)
 JUMP_MPS = 70
@@ -21,7 +22,7 @@ def hav_km(a, b) -> float:
 
 
 def merge_visits(vs: list[dict]) -> list[dict]:
-    """vs: [{start,end,lat,lon}] → 같은 곳(300m) 10분 안 끊김은 하나로. 좌표는 오래 머문 쪽."""
+    """vs: [{start,end,lat,lon}] → 같은 곳(100m) 10분 안 끊김은 하나로. 좌표는 오래 머문 쪽."""
     out: list[dict] = []
     for v in sorted(vs, key=lambda x: x["start"]):
         if out:
@@ -41,7 +42,7 @@ def merge_visits(vs: list[dict]) -> list[dict]:
 def runs(pts: list[dict], visits: list[dict]) -> list[list[dict]]:
     """머문 곳 밖의 점을 시간 끊김(15분)으로 묶음. 튀는 점(70m/s 초과) 제외."""
     def inside(p):
-        return any(v["start"] <= p["ts"] <= v["end"] and hav_km((v["lat"], v["lon"]), (p["lat"], p["lon"])) <= MERGE_KM
+        return any(v["start"] <= p["ts"] <= v["end"] and hav_km((v["lat"], v["lon"]), (p["lat"], p["lon"])) <= INSIDE_KM
                    for v in visits)
     out, cur = [], []
     for p in pts:
@@ -108,17 +109,31 @@ def simplify(path: list, n: int = 300) -> list:
 
 
 def build_items(day0: datetime, day1: datetime, visits_raw: list[dict], pts: list[dict], acts: list[dict],
-                steps: list[dict], carplay: list[dict], places: list[dict]) -> dict:
+                steps: list[dict], carplay: list[dict], places: list[dict], checkins: list[dict] | None = None) -> dict:
     """[day0, day1) 하루 (UTC). carplay: [{event, at}] 시간순. places: 자동 체크인 장소 [{name, lat, lon, radius}]."""
     visits = merge_visits(visits_raw)
+    # 이름: 스웜 체크인을 시간이 맞는(들어오기 10분 전 ~ 나가고 30분 뒤 — 늦게 누른 체크인) 머문 곳 중 가장 가까운 곳(200m 안)에 붙임
+    names: dict[int, dict] = {}
+    best: dict[int, float] = {}
+    for c in checkins or []:
+        cand = [(hav_km((c["lat"], c["lon"]), (v["lat"], v["lon"])), v) for v in visits
+                if v["start"] - timedelta(minutes=10) <= c["ts"] <= v["end"] + timedelta(minutes=30)]
+        cand = [x for x in cand if x[0] <= 0.2]
+        if not cand:
+            continue
+        d, v = min(cand, key=lambda x: x[0])
+        if d < best.get(id(v), 9):
+            best[id(v)], names[id(v)] = d, c
     items = []
     for v in visits:
         if v["end"] <= day0 or v["start"] >= day1:
             continue
         s, e = max(v["start"], day0), min(v["end"], day1)
+        ck = names.get(id(v))
         pl = next((p for p in places if hav_km((p["lat"], p["lon"]), (v["lat"], v["lon"])) * 1000 <= max(150, p["radius"] * 1.5)), None)
         items.append({"kind": "visit", "start": s, "end": e, "lat": v["lat"], "lon": v["lon"],
-                      "name": pl["name"] if pl else None, "open": bool(v.get("open")),
+                      "name": ck["name"] if ck else (pl["name"] if pl else None), "checkin": bool(ck),
+                      "open": bool(v.get("open")),
                       "minutes": round((e - s).total_seconds() / 60)})
     # 운전 = CarPlay 연결 구간
     sessions, on = [], None
