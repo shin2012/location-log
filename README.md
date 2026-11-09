@@ -133,3 +133,19 @@ SwiftUI 앱. 백그라운드에서도 GPS 기록. `https://location.b-612.kr/app
 - 충전 중(발열 '심각' 미만): 움직일 때 '정밀', 머무는 동안 GPS 확인 3분마다 (`chargePrecise`)
 - 차로 이동(CarPlay 연결 또는 동작 '자동차') + 충전 중: 경로 기록을 자동으로 켬(`Recorder.startAuto`, 이름 '운전 · …' = CarPlay 연결, '차량 이동 · …' = 연결 없음) → 1초 GPS + 터널 센서 추정. 그 점(trk)과 추정점(imu)이 하루 종일 기록에도 들어감. 조건이 풀리면 3분(CarPlay 해제 직후면 1분) 뒤 끔. 직접 켠 기록은 건드리지 않음 (`driveRecord`)
 - CarPlay: 1순위 단축어 자동화(CarPlay 연결 시/해제 시) → 앱 동작 `CarPlay 연결됨`/`CarPlay 연결 해제됨` (`CarPlayIntents.swift`, 한 번 받으면 오디오 경로 판정 끔), 2순위 소리 출력 경로의 carAudio (`CarPlay.swift`) → `POST /api/carplay` (쌓아 두고 재전송) → location-api 가 fsq_map `/api/carplay/event` 로 전달(`FSQ_CARPLAY_URL`, `CARPLAY_API_TOKEN` in .env, device='Sillage'). 단축어 대신 (`carplaySend`)
+
+## 자동 체크인 (v0.9) — IFTTT·람다 대체
+
+```mermaid
+flowchart LR
+  A[실라쥬 앱<br>장소 반경 100m 진입·이탈] -->|POST /api/autocheckin/event| B[location-api<br>place_event]
+  B -->|3분 머묾 확정<br>15분 안 재진입 무시| C{AUTOCHECKIN_WRITE}
+  C -->|1| D[fsq_map /api/autocheckin<br>FSQ_Swarm ManuallySaved_]
+  D --> E[람다가 캘린더 등록]
+  C -->|0 기록만| B
+```
+
+- 장소: `auto_place` 테이블 (앱이 6시간마다 받아 감, 앱 업데이트 없이 변경). 감시 중심은 실제 머무는 곳 좌표.
+- 이벤트: `place_event` (UTC). 상태 `pending → confirmed / ignored(이유) / sent / failed`. 확정 규칙은 `server/autocheckin.py`, 시험 `python3 tests/test_autocheckin.py`.
+- 이탈(퇴근)도 확정해 저장 — 데일리요섭 체류 끝 시각에 쓸 예정.
+- `AUTOCHECKIN_WRITE=0`(기본)이면 기록만, `1`이면 확정된 진입을 fsq_map으로 넘겨 체크인 저장. fsq_map은 같은 장소 ±10분 체크인이 있으면 저장하지 않음.

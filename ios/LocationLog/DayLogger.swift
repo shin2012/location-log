@@ -72,6 +72,16 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
         CarPlayWatcher.shared.onChange = { [weak self] on in self?.carPlayChanged(on) }
         CarPlayWatcher.shared.start()
         settings.onChange = { [weak self] old in self?.prefsChanged(old) }
+        // 자동 체크인: 장소 반경 진입·이탈 (하루 종일 기록이 꺼져 있어도 동작)
+        AutoCheckin.shared.onChange = { [weak self] in
+            guard let self else { return }
+            AutoCheckin.shared.apply(self.manager)
+        }
+        AutoCheckin.shared.apply(manager)
+        Task {
+            await AutoCheckin.shared.refreshPlaces()
+            await AutoCheckin.shared.flush()
+        }
         UIDevice.current.isBatteryMonitoringEnabled = true
         let nc = NotificationCenter.default
         for n in [UIDevice.batteryLevelDidChangeNotification, UIDevice.batteryStateDidChangeNotification,
@@ -432,8 +442,20 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
         }
     }
 
+    nonisolated func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
+        MainActor.assumeIsolated {
+            if region.identifier.hasPrefix(AutoCheckin.prefix) {
+                AutoCheckin.shared.regionEvent(region.identifier, enter: true, location: manager.location)
+            }
+        }
+    }
+
     nonisolated func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
         MainActor.assumeIsolated {
+            if region.identifier.hasPrefix(AutoCheckin.prefix) {
+                AutoCheckin.shared.regionEvent(region.identifier, enter: false, location: manager.location)
+                return
+            }
             guard self.running, region.identifier == Self.regionId else { return }
             self.handle(self.policy.nudge(self.now()))
         }
@@ -462,7 +484,9 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {}
 
     nonisolated func locationManager(_ manager: CLLocationManager, monitoringDidFailFor region: CLRegion?, withError error: Error) {
-        MainActor.assumeIsolated { self.regionCenter = nil }
+        MainActor.assumeIsolated {
+            if region?.identifier == Self.regionId { self.regionCenter = nil }
+        }
     }
 
     // MARK: 업로드·통계
@@ -474,6 +498,8 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
         await store.upload(wifiOnly: p.wifiOnly)
         await MotionHistory.shared.upload(wifiOnly: p.wifiOnly)
         await CarPlayEvents.shared.flush()
+        await AutoCheckin.shared.flush()
+        await AutoCheckin.shared.refreshPlaces()
     }
 
     private var gpsDay = ""

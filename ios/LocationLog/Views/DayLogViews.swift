@@ -10,6 +10,7 @@ struct DayLogSettingsView: View {
     @ObservedObject var motion = MotionHistory.shared
     @ObservedObject var carplay = CarPlayWatcher.shared
     @ObservedObject var cpEvents = CarPlayEvents.shared
+    @ObservedObject var auto = AutoCheckin.shared
     @EnvironmentObject var toaster: Toaster
     @State private var newPlaceName = ""
 
@@ -99,6 +100,23 @@ struct DayLogSettingsView: View {
                 Toggle("CarPlay 연결 기록 보내기", isOn: p.carplaySend)
             } header: { Text("CarPlay") } footer: {
                 Text("CarPlay에 연결·해제되면 시각과 위치를 데일리요섭(swarm 지도)으로 보냅니다. 연결되면 '내가 운전', 연결 없이 차로 움직이면 '차량 이동'으로 구분합니다.\n가장 정확한 방법: 단축어 › 자동화 › CarPlay › '연결 시'에 동작 '실라쥬 › CarPlay 연결됨', '연결 해제 시'에 'CarPlay 연결 해제됨'을 넣으세요. 한 번 받으면 그 뒤로는 단축어 신호만 씁니다. 설정 전에는 소리 출력 경로로 짐작합니다.")
+            }
+
+            Section {
+                Toggle("자동 체크인", isOn: $auto.enabled)
+                ForEach(auto.places) { pl in
+                    LabeledContent(pl.name, value: "반경 \(Int(pl.radius))m")
+                }
+                if auto.places.isEmpty { Text("장소 목록을 아직 못 받았습니다").font(.caption).foregroundStyle(.secondary) }
+                if !auto.pending.isEmpty { LabeledContent("보낼 기록", value: "\(auto.pending.count)건") }
+                if let e = auto.lastError { Text(e).font(.caption).foregroundStyle(Palette.warn) }
+                ForEach(auto.recent.prefix(8)) { l in
+                    LabeledContent(l.name, value: (l.kind == "enter" ? "들어옴 " : "나감 ") + Fmt.hm(l.at.timeIntervalSince1970 * 1000))
+                        .font(.caption)
+                }
+                Button("장소 목록 다시 받기") { Task { await auto.refreshPlaces(force: true) } }
+            } header: { Text("자동 체크인") } footer: {
+                Text("집·회사처럼 서버에 등록한 장소 반경에 들어가면 체크인, 나가면 퇴근(이탈)으로 기록합니다. 3분 넘게 머물러야 체크인이 되고, 나갔다가 15분 안에 다시 들어오면 나간 것으로 치지 않습니다. 시각은 들어간·나간 순간입니다. 위치 권한 '항상 허용'이 필요합니다.")
             }
 
             Section {

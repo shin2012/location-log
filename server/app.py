@@ -395,6 +395,122 @@ def carplay(body: CarPlayIn):
     return {"ok": True, "id": out.get("id"), "duplicate": bool(out.get("duplicate"))}
 
 
+# ─── 자동 체크인 (IFTTT·람다 대체) ───
+import threading  # noqa: E402
+
+import autocheckin  # noqa: E402
+
+AC_WRITE = os.environ.get("AUTOCHECKIN_WRITE", "0") == "1"   # 0 = 기록만 (함께 돌려 보는 기간)
+
+
+@app.get("/api/autocheckin/places")
+def ac_places():
+    with db() as cur:
+        cur.execute("SELECT venue_id, name, lat, lon, radius FROM auto_place WHERE enabled=1 ORDER BY name")
+        return cur.fetchall()
+
+
+class PlaceEventIn(BaseModel):
+    client_id: str = Field(min_length=8, max_length=64)
+    venue_id: str = Field(max_length=40)
+    kind: str                # enter | exit
+    ts: float                # epoch ms (기기가 감지한 시각)
+    lat: float | None = None
+    lon: float | None = None
+    acc: float | None = None
+
+
+@app.post("/api/autocheckin/event")
+def ac_event(body: PlaceEventIn):
+    if body.kind not in ("enter", "exit"):
+        raise HTTPException(400, "kind 는 enter / exit")
+    with db() as cur:
+        cur.execute("SELECT 1 FROM auto_place WHERE venue_id=%s", (body.venue_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "등록 안 된 장소")
+        n = cur.execute("INSERT IGNORE INTO place_event (client_id, venue_id, kind, at, lat, lon, acc) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                        (body.client_id, body.venue_id, body.kind, ms_to_dt(body.ts), body.lat, body.lon, body.acc))
+    ac_process()
+    return {"ok": True, "duplicate": n == 0}
+
+
+@app.get("/api/autocheckin/events")
+def ac_events(days: int = 7):
+    with db() as cur:
+        cur.execute("SELECT e.id, e.venue_id, p.name, e.kind, e.at, e.status, e.note, e.fsq_id, e.received_at "
+                    "FROM place_event e LEFT JOIN auto_place p USING (venue_id) "
+                    "WHERE e.at >= UTC_TIMESTAMP() - INTERVAL %s DAY ORDER BY e.at DESC", (min(days, 60),))
+        rows = cur.fetchall()
+    for r in rows:
+        r["at"], r["received_at"] = dt_to_ms(r["at"]), dt_to_ms(r["received_at"])
+    return {"write": AC_WRITE, "events": rows}
+
+
+_ac_lock = threading.Lock()
+
+
+def _ac_forward(venue_id: str, at: datetime) -> str:
+    """fsq_map 에 체크인 저장 → FSQ_ID (ManuallySaved_…)."""
+    import json as _json
+    import urllib.request
+    url = os.environ.get("FSQ_AUTOCHECKIN_URL") or (os.environ.get("FSQ_CARPLAY_URL", "").replace("/api/carplay/event", "/api/autocheckin"))
+    tok = os.environ.get("CARPLAY_API_TOKEN")
+    if not url or not tok:
+        raise RuntimeError("전달 설정 없음")
+    data = {"venue_id": venue_id, "timestamp": at.replace(tzinfo=timezone.utc).timestamp(), "device": "Sillage"}
+    req = urllib.request.Request(url, data=_json.dumps(data).encode(), method="POST",
+                                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {tok}"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        out = _json.loads(r.read() or b"{}")
+    return out.get("fsq_id") or ("중복:" + str(out.get("existing") or ""))
+
+
+def ac_process(now: datetime | None = None) -> dict:
+    """대기 중인 진입·이탈 확정 → (쓰기 켜짐이면) 진입을 체크인으로 전달. 1분마다 + 이벤트 받을 때."""
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    done = {"confirmed": 0, "ignored": 0, "sent": 0, "failed": 0}
+    with _ac_lock, db() as cur:
+        cur.execute("SELECT DISTINCT venue_id FROM place_event WHERE status='pending' "
+                    "OR (status='failed' AND kind='enter' AND at > %s)", (now - timedelta(days=1),))
+        for (vid,) in [(r["venue_id"],) for r in cur.fetchall()]:
+            cur.execute("SELECT id, kind, at, status, received_at AS recv FROM place_event WHERE venue_id=%s AND at > %s ORDER BY at, id",
+                        (vid, now - timedelta(days=2)))
+            evs = cur.fetchall()
+            for eid, (st, note) in autocheckin.decide(list(evs), now).items():
+                cur.execute("UPDATE place_event SET status=%s, note=%s, resolved_at=%s WHERE id=%s",
+                            (st, note, now, eid))
+                done[st] += 1
+            if not AC_WRITE:
+                continue
+            cur.execute("SELECT id, at FROM place_event WHERE venue_id=%s AND kind='enter' AND fsq_id IS NULL "
+                        "AND (status='confirmed' OR status='failed') AND at > %s", (vid, now - timedelta(days=1)))
+            for r in cur.fetchall():
+                try:
+                    fid = _ac_forward(vid, r["at"])
+                    cur.execute("UPDATE place_event SET status='sent', fsq_id=%s, note=NULL WHERE id=%s", (fid[:40], r["id"]))
+                    done["sent"] += 1
+                except Exception as e:
+                    cur.execute("UPDATE place_event SET status='failed', note=%s WHERE id=%s", (str(e)[:250], r["id"]))
+                    done["failed"] += 1
+    return done
+
+
+def _ac_loop():
+    while True:
+        try:
+            ac_process()
+        except Exception as e:
+            print(f"[autocheckin] {e}", flush=True)
+        time.sleep(60)
+
+
+@app.on_event("startup")
+def _ac_start():
+    if os.environ.get("AC_LOOP", "1") == "1":
+        threading.Thread(target=_ac_loop, daemon=True).start()
+
+
 # 센서 원본 녹화 (알고리즘 조정용, /lab)
 @app.post("/api/log")
 async def post_log(request: Request):
