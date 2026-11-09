@@ -1,8 +1,10 @@
 import Foundation
 import AVFoundation
 
-/// CarPlay 연결 알아채기 — 소리 출력 경로에 '차량 오디오(carAudio)'가 있으면 연결된 것.
-/// 앱은 하루 종일 기록 때문에 백그라운드에서도 깨어 있으므로 경로 변경 알림을 받는다.
+/// CarPlay 연결 알아채기.
+/// 1순위: 단축어 자동화 'CarPlay 연결 시/해제 시' → 앱 동작(CarPlayIntents.swift). 애플 공식 신호라 놓치지 않음.
+///        한 번이라도 단축어로 받으면 그 뒤로는 단축어만 믿음 (아래 오디오 경로 판정은 끔).
+/// 2순위(단축어 설정 전): 소리 출력 경로에 '차량 오디오(carAudio)'가 있으면 연결된 것.
 /// 상태는 저장해 두어 앱이 다시 켜져도 같은 연결을 두 번 보내지 않는다.
 @MainActor
 final class CarPlayWatcher: ObservableObject {
@@ -14,10 +16,23 @@ final class CarPlayWatcher: ObservableObject {
     var onChange: ((Bool) -> Void)?
 
     private static let stateKey = "carplay.connected"
+    private static let viaKey = "carplay.viaShortcut"
     private var started = false
+    /// 단축어로 받은 적 있음 → 오디오 경로 판정 안 씀
+    @Published private(set) var viaShortcut = false
 
     private init() {
         connected = UserDefaults.standard.bool(forKey: Self.stateKey)
+        viaShortcut = UserDefaults.standard.bool(forKey: Self.viaKey)
+    }
+
+    /// 단축어 동작에서
+    func set(_ on: Bool) {
+        if !viaShortcut {
+            viaShortcut = true
+            UserDefaults.standard.set(true, forKey: Self.viaKey)
+        }
+        update(on)
     }
 
     func start() {
@@ -34,7 +49,11 @@ final class CarPlayWatcher: ObservableObject {
     }
 
     func check() {
-        let on = Self.isCarRoute()
+        guard !viaShortcut else { return }
+        update(Self.isCarRoute())
+    }
+
+    private func update(_ on: Bool) {
         guard on != connected else { return }
         connected = on
         since = Date()
