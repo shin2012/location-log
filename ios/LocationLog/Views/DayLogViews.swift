@@ -237,8 +237,8 @@ struct DriveSettingsView: View {
             }
             Section {
                 Label("단축어 앱 › 자동화 › 새로운 자동화 › CarPlay", systemImage: "1.circle")
-                Label("'연결 시' › 동작 '실라쥬 › CarPlay 연결 기록하기'", systemImage: "2.circle")
-                Label("'연결 해제 시' › 동작 '실라쥬 › CarPlay 연결 해제 기록하기'", systemImage: "3.circle")
+                Label("'연결 시' › 동작 '시야쥬 › CarPlay 연결 기록하기'", systemImage: "2.circle")
+                Label("'연결 해제 시' › 동작 '시야쥬 › CarPlay 연결 해제 기록하기'", systemImage: "3.circle")
                 Label("두 자동화 모두 '즉시 실행'", systemImage: "4.circle")
             } header: { Text("단축어 설정 (가장 정확)") } footer: {
                 Text("한 번 받으면 그 뒤로는 단축어 신호만 씁니다. 설정 전에는 소리 출력 경로로 짐작합니다.")

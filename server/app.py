@@ -1,4 +1,4 @@
-"""실라쥬(위치 기록 앱) 전용 API — https://location.b-612.kr/app-api/* (Bearer 토큰)
+"""시야쥬(위치 기록 앱) 전용 API — https://location.b-612.kr/app-api/* (Bearer 토큰)
 
 경로(track)와 점(track_pt)을 MariaDB location_log 에 저장. 점은 (track_id, seq) 기준 REPLACE 라서
 같은 점을 다시 보내도 안전하고, 터널 구간 사후 보정값도 같은 seq 로 덮어씀.
@@ -465,7 +465,7 @@ class PlaceNew(BaseModel):
 
 
 def _stay_center(cur, lat: float, lon: float) -> tuple[float, float, int]:
-    """장소 좌표 200m 안 실라쥬 머문 곳들의 가운데 (실제 머무는 자리). 없으면 원래 좌표."""
+    """장소 좌표 200m 안 시야쥬 머문 곳들의 가운데 (실제 머무는 자리). 없으면 원래 좌표."""
     d = 0.0018
     cur.execute("SELECT lat, lon FROM day_visit WHERE lat BETWEEN %s AND %s AND lon BETWEEN %s AND %s",
                 (lat - d, lat + d, lon - d * 1.3, lon + d * 1.3))
@@ -512,7 +512,7 @@ def ac_venues(lat: float | None = None, lon: float | None = None, q: str = "", l
 
 @app.post("/api/autocheckin/places")
 def ac_place_add(body: PlaceNew, center: int = 1):
-    """장소 추가. center=1 이면 감시 중심을 실제로 머물던 자리(실라쥬 머문 곳)로 옮김."""
+    """장소 추가. center=1 이면 감시 중심을 실제로 머물던 자리(시야쥬 머문 곳)로 옮김."""
     with db() as cur:
         cur.execute("SELECT 1 FROM auto_place WHERE venue_id=%s", (body.venue_id,))
         if cur.fetchone():

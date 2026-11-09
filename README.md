@@ -1,10 +1,10 @@
-# 📍 실라쥬 (location-log)
+# 📍 시야쥬 (location-log)
 
 ![Swift](https://img.shields.io/badge/SwiftUI-iPhone·iPad-F05138?style=flat-square&logo=swift&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?style=flat-square&logo=fastapi&logoColor=white)
 ![MariaDB](https://img.shields.io/badge/MariaDB-location__log-003545?style=flat-square&logo=mariadb&logoColor=white)
 
-이동 경로와 하루 동선을 기록하는 **iOS 앱 '실라쥬'**와 그 앱 전용 API. 경로 기록(수동), 자동 기록(하루 종일), 자동 체크인, CarPlay·운전 기록을 맡고, 데일리요섭이 DB(`location_log`)를 읽어 하루 페이지에 씀.
+이동 경로와 하루 동선을 기록하는 **iOS 앱 '시야쥬'**와 그 앱 전용 API. 경로 기록(수동), 자동 기록(하루 종일), 자동 체크인, CarPlay·운전 기록을 맡고, 데일리요섭이 DB(`location_log`)를 읽어 하루 페이지에 씀.
 
 > [!NOTE]
 > 웹 화면(location.b-612.kr 웹앱·`/lab` 센서 실험실)은 2026-11 에 없앰. 되돌리기: 태그 `before-web-removal`.
@@ -71,7 +71,7 @@ SwiftUI 앱. 백그라운드에서도 GPS 기록. `https://location.b-612.kr/app
 
 ```mermaid
 flowchart LR
-  A[실라쥬 앱<br>장소 반경 100m 진입·이탈] -->|POST /api/autocheckin/event| B[location-api<br>place_event]
+  A[시야쥬 앱<br>장소 반경 100m 진입·이탈] -->|POST /api/autocheckin/event| B[location-api<br>place_event]
   B -->|3분 머묾 확정<br>15분 안 재진입 무시| C{AUTOCHECKIN_WRITE}
   C -->|1| D[fsq_map /api/autocheckin<br>FSQ_Swarm ManuallySaved_]
   D --> E[람다가 캘린더 등록]

@@ -1,4 +1,4 @@
-# 실라쥬 앱 전용 API (웹 화면은 없앰). NPM 호스트 75 (location.b-612.kr) → location-api:8000
+# 시야쥬 앱 전용 API (웹 화면은 없앰). NPM 호스트 75 (location.b-612.kr) → location-api:8000
 services:
   api:
     build: ./server

@@ -22,7 +22,7 @@ struct PatchBody: Encodable {
     var mode: String?
 }
 
-/// location.b-612.kr/app-api — 실라쥬 전용 FastAPI. Bearer 토큰.
+/// location.b-612.kr/app-api — 시야쥬 전용 FastAPI. Bearer 토큰.
 enum API {
     private static let decoder: JSONDecoder = {
         let d = JSONDecoder()

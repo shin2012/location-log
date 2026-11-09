@@ -38,7 +38,7 @@ struct RootView: View {
                     List(AppTab.allCases, selection: Binding<AppTab?>(get: { tab }, set: { if let t = $0 { tab = t } })) { t in
                         Label(t.title, systemImage: t.symbol).tag(t)
                     }
-                    .navigationTitle("실라쥬")
+                    .navigationTitle("시야쥬")
                 } detail: {
                     screen(tab)
                 }
