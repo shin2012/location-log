@@ -253,6 +253,29 @@ class DayVisitsIn(BaseModel):
     visits: list[DayVisit]
 
 
+class DayAct(BaseModel):
+    ts: float  # epoch ms, 이 방식 시작
+    act: str = Field(max_length=10)
+    conf: int = 0
+
+
+class DayActsIn(BaseModel):
+    acts: list[DayAct]
+
+
+class DayStep(BaseModel):
+    ts: float  # epoch ms, 분 시작
+    steps: int
+    dist: float | None = None
+
+
+class DayStepsIn(BaseModel):
+    steps: list[DayStep]
+
+
+DAY_ACT = ("stationary", "walk", "run", "bike", "car", "unknown")
+
+
 def day_range(date: str):
     try:
         d = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=KST)
@@ -282,6 +305,27 @@ def day_visits(body: DayVisitsIn):
     return {"ok": True, "n": len(rows)}
 
 
+@app.post("/api/day/acts")
+def day_acts(body: DayActsIn):
+    """이동 방식이 바뀐 시각 (기기 동작 기록). ts 기준 REPLACE → 다시 보내도 안전"""
+    rows = [(ms_to_dt(a.ts), a.act, max(0, min(2, a.conf))) for a in body.acts if a.act in DAY_ACT]
+    if rows:
+        with db() as cur:
+            cur.executemany("REPLACE INTO day_act (ts, act, conf) VALUES (%s,%s,%s)", rows)
+    return {"ok": True, "n": len(rows)}
+
+
+@app.post("/api/day/steps")
+def day_steps(body: DayStepsIn):
+    """1분 걸음 (0 걸음 분 포함)"""
+    rows = [(ms_to_dt(p.ts).replace(second=0, microsecond=0), max(0, min(65535, p.steps)), p.dist)
+            for p in body.steps]
+    if rows:
+        with db() as cur:
+            cur.executemany("REPLACE INTO day_step (ts, steps, dist_m) VALUES (%s,%s,%s)", rows)
+    return {"ok": True, "n": len(rows)}
+
+
 @app.get("/api/day")
 def day_list(limit: int = 90):
     """기록 있는 날짜 (한국 시각) + 점 수"""
@@ -301,7 +345,12 @@ def day_get(date: str):
         cur.execute("SELECT arrive, depart, lat, lon FROM day_visit WHERE (depart IS NULL OR depart >= %s) AND arrive < %s "
                     "ORDER BY arrive", (a, b))
         vs = [{**v, "arrive": dt_to_ms(v["arrive"]), "depart": dt_to_ms(v["depart"])} for v in cur.fetchall()]
-    return {"date": date, "points": pts, "visits": vs}
+        cur.execute("SELECT ts, act, conf FROM day_act WHERE ts >= %s AND ts < %s ORDER BY ts", (a, b))
+        acts = [{**x, "ts": dt_to_ms(x["ts"])} for x in cur.fetchall()]
+        cur.execute("SELECT SUM(steps) n, SUM(dist_m) m, COUNT(*) k FROM day_step WHERE ts >= %s AND ts < %s", (a, b))
+        st = cur.fetchone() or {}
+    return {"date": date, "points": pts, "visits": vs, "acts": acts,
+            "steps": {"total": int(st.get("n") or 0), "dist_m": float(st.get("m") or 0), "minutes": int(st.get("k") or 0)}}
 
 
 @app.delete("/api/day/{date}")
@@ -310,7 +359,9 @@ def day_delete(date: str):
     with db() as cur:
         n = cur.execute("DELETE FROM day_pt WHERE ts >= %s AND ts < %s", (a, b))
         m = cur.execute("DELETE FROM day_visit WHERE arrive >= %s AND arrive < %s", (a, b))
-    return {"ok": True, "points": n, "visits": m}
+        k = cur.execute("DELETE FROM day_act WHERE ts >= %s AND ts < %s", (a, b))
+        j = cur.execute("DELETE FROM day_step WHERE ts >= %s AND ts < %s", (a, b))
+    return {"ok": True, "points": n, "visits": m, "acts": k, "steps": j}
 
 
 # 센서 원본 녹화 (알고리즘 조정용, /lab)

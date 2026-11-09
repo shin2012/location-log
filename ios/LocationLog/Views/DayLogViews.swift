@@ -7,6 +7,7 @@ struct DayLogSettingsView: View {
     @ObservedObject var logger = DayLogger.shared
     @ObservedObject var settings = DaySettings.shared
     @ObservedObject var store = DayLogger.shared.store
+    @ObservedObject var motion = MotionHistory.shared
     @EnvironmentObject var toaster: Toaster
     @State private var newPlaceName = ""
 
@@ -23,6 +24,8 @@ struct DayLogSettingsView: View {
                     LabeledContent("서버 대기", value: AppSettings.shared.token.isEmpty ? "이 기기에만 저장" : "\(store.pendingCount.formatted())건")
                     if let u = store.lastUploadAt { LabeledContent("마지막 업로드", value: Fmt.hm(u.timeIntervalSince1970 * 1000)) }
                     if let e = store.lastError { Text(e).font(.caption).foregroundStyle(Palette.warn) }
+                    if let u = motion.lastUploadAt { LabeledContent("이동 방식·걸음 업로드", value: Fmt.hm(u.timeIntervalSince1970 * 1000)) }
+                    if let e = motion.lastError { Text(e).font(.caption).foregroundStyle(Palette.warn) }
                     if logger.authorization != .authorizedAlways {
                         Button("위치 권한 '항상 허용' 켜기") {
                             if logger.authorization == .notDetermined { logger.requestPermission() }
@@ -32,7 +35,7 @@ struct DayLogSettingsView: View {
                 }
                 NavigationLink("날짜별 보기") { DayHistoryView() }
             } footer: {
-                Text("'기록 시작'을 누르지 않아도 하루 내내 위치를 저장합니다. 머무는 동안은 GPS를 꺼 두고, 움직이기 시작하면 켭니다. 앱을 위로 쓸어 강제로 끄면 다시 열 때까지 멈출 수 있습니다.")
+                Text("'기록 시작'을 누르지 않아도 하루 내내 위치를 저장합니다. 머무는 동안은 GPS를 꺼 두고, 움직이기 시작하면 켭니다. 이동 방식(걷기·차·자전거)과 1분 걸음도 함께 올립니다(iOS는 7일치만 보관). 앱을 위로 쓸어 강제로 끄면 다시 열 때까지 멈출 수 있습니다.")
             }
 
             Section {

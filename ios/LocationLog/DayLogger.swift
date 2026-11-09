@@ -130,7 +130,7 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
             handle(policy.nudge(now()))
         } else if !p.enabled && running {
             stop()
-            Task { await store.upload(wifiOnly: false) }
+            Task { await store.upload(wifiOnly: false); await MotionHistory.shared.upload(wifiOnly: false) }
         } else if running {
             lastApplied = nil
             apply()
@@ -391,6 +391,7 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
         guard force || Date().timeIntervalSince(lastUploadTry) >= Double(p.uploadMinutes) * 60 else { return }
         lastUploadTry = Date()
         await store.upload(wifiOnly: p.wifiOnly)
+        await MotionHistory.shared.upload(wifiOnly: p.wifiOnly)
     }
 
     private var gpsDay = ""
