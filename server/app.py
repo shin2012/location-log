@@ -12,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pymysql
+
+import timeline as TL
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -334,6 +336,36 @@ def day_list(limit: int = 90):
                 for r in cur.fetchall()]
 
 
+@app.get("/api/day/{date}/timeline")
+def day_timeline(date: str):
+    """타임라인 탭: 머문 곳·이동(방식·운전 여부·걸음·경로)을 시간순으로. 시각은 epoch ms."""
+    a, b = day_range(date)
+    with db() as cur:
+        cur.execute("SELECT arrive, depart, lat, lon FROM day_visit WHERE arrive < %s AND (depart IS NULL OR depart > %s) ORDER BY arrive",
+                    (b, a - timedelta(hours=12)))
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        vs = [{"start": r["arrive"], "end": r["depart"] or now, "lat": r["lat"], "lon": r["lon"], "open": r["depart"] is None}
+              for r in cur.fetchall()]
+        cur.execute("SELECT ts, lat, lon, src, act FROM day_pt WHERE ts >= %s AND ts < %s ORDER BY ts", (a, b))
+        pts = [p for p in cur.fetchall() if p["src"] in TL.PATH_SRC]
+        cur.execute("(SELECT ts, act FROM day_act WHERE ts < %s ORDER BY ts DESC LIMIT 1) UNION ALL "
+                    "(SELECT ts, act FROM day_act WHERE ts >= %s AND ts < %s) ORDER BY ts", (a, a, b))
+        acts = cur.fetchall()
+        cur.execute("SELECT ts, steps FROM day_step WHERE ts >= %s AND ts < %s ORDER BY ts", (a, b))
+        steps = cur.fetchall()
+        # 운전 판정: swarm.FSQ_CarPlay (앱·단축어 둘 다 여기로 모임, 한국 시각) — loc_rw 에 SELECT 권한
+        cur.execute("SELECT event_type AS event, event_time - INTERVAL 9 HOUR AS at FROM swarm.FSQ_CarPlay "
+                    "WHERE event_time >= %s AND event_time < %s ORDER BY event_time",
+                    (a + timedelta(hours=3), b + timedelta(hours=9)))
+        cps = cur.fetchall()
+        cur.execute("SELECT name, lat, lon, radius FROM auto_place")
+        places = cur.fetchall()
+    out = TL.build_items(a, b, vs, pts, acts, steps, cps, places)
+    for it in out["items"]:
+        it["start"], it["end"] = dt_to_ms(it["start"]), dt_to_ms(it["end"])
+    return {"date": date, **out}
+
+
 @app.get("/api/day/{date}")
 def day_get(date: str):
     a, b = day_range(date)
@@ -402,10 +434,39 @@ AC_WRITE = os.environ.get("AUTOCHECKIN_WRITE", "0") == "1"   # 0 = 기록만 (�
 
 
 @app.get("/api/autocheckin/places")
-def ac_places():
+def ac_places(all: int = 0):
+    """감시할 장소 (all=1 이면 꺼 둔 것도, enabled 포함)"""
     with db() as cur:
+        if all:
+            cur.execute("SELECT venue_id, name, lat, lon, radius, enabled FROM auto_place ORDER BY name")
+            return [{**r, "enabled": bool(r["enabled"])} for r in cur.fetchall()]
         cur.execute("SELECT venue_id, name, lat, lon, radius FROM auto_place WHERE enabled=1 ORDER BY name")
         return cur.fetchall()
+
+
+class PlacePatch(BaseModel):
+    radius: int | None = Field(default=None, ge=50, le=500)
+    enabled: bool | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+
+
+@app.patch("/api/autocheckin/places/{venue_id}")
+def ac_place_patch(venue_id: str, body: PlacePatch):
+    sets, args = [], []
+    for k in ("radius", "enabled", "name"):
+        v = getattr(body, k)
+        if v is not None:
+            sets.append(f"{k}=%s")
+            args.append(int(v) if k == "enabled" else v)
+    if not sets:
+        raise HTTPException(400, "바꿀 값 없음")
+    with db() as cur:
+        n = cur.execute(f"UPDATE auto_place SET {', '.join(sets)} WHERE venue_id=%s", (*args, venue_id))
+        cur.execute("SELECT venue_id, name, lat, lon, radius, enabled FROM auto_place WHERE venue_id=%s", (venue_id,))
+        r = cur.fetchone()
+    if not r:
+        raise HTTPException(404, "없는 장소")
+    return {**r, "enabled": bool(r["enabled"]), "changed": bool(n)}
 
 
 class PlaceEventIn(BaseModel):
