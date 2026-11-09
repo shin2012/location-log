@@ -99,7 +99,7 @@ struct DayLogSettingsView: View {
             Section {
                 Toggle("CarPlay 연결 기록 보내기", isOn: p.carplaySend)
             } header: { Text("CarPlay") } footer: {
-                Text("CarPlay에 연결·해제되면 시각과 위치를 데일리요섭(swarm 지도)으로 보냅니다. 연결되면 '내가 운전', 연결 없이 차로 움직이면 '차량 이동'으로 구분합니다.\n가장 정확한 방법: 단축어 › 자동화 › CarPlay › '연결 시'에 동작 '실라쥬 › CarPlay 연결됨', '연결 해제 시'에 'CarPlay 연결 해제됨'을 넣으세요. 한 번 받으면 그 뒤로는 단축어 신호만 씁니다. 설정 전에는 소리 출력 경로로 짐작합니다.")
+                Text("CarPlay에 연결·해제되면 시각과 위치를 데일리요섭(swarm 지도)으로 보냅니다. 연결되면 '내가 운전', 연결 없이 차로 움직이면 '차량 이동'으로 구분합니다.\n가장 정확한 방법: 단축어 › 자동화 › CarPlay › '연결 시'에 동작 '실라쥬 › CarPlay 연결 기록하기', '연결 해제 시'에 'CarPlay 연결 해제 기록하기'를 넣으세요. 한 번 받으면 그 뒤로는 단축어 신호만 씁니다. 설정 전에는 소리 출력 경로로 짐작합니다.")
             }
 
             Section {
