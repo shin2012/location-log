@@ -223,7 +223,7 @@ struct TimelineRow: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: item.isVisit ? "mappin.circle.fill" : item.moveSymbol)
                 .font(.title3)
-                .foregroundStyle(item.isVisit ? Color.purple : tint)
+                .foregroundStyle(item.isVisit ? Color.indigo : tint)
                 .frame(width: 28)
             VStack(alignment: .leading, spacing: 3) {
                 Text(titleText).font(.body.weight(.semibold))
