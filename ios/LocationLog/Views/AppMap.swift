@@ -140,6 +140,7 @@ struct AppMap: View {
 
     @AppStorage("mapProvider") private var want: MapProvider = .naver
     @ObservedObject private var services = MapServices.shared
+    @Environment(\.colorScheme) private var scheme
 
     private var anchor: CLLocationCoordinate2D? {
         fit?.coords.first ?? lines.first?.coords.first ?? pins.first?.coord ?? circles.first?.center ?? user
@@ -149,12 +150,12 @@ struct AppMap: View {
         switch services.resolve(want, near: anchor) {
         #if canImport(NMapsMap)
         case .naver:
-            NaverMapRep(lines: lines, pins: pins, circles: circles, fit: fit, showsUser: showsUser,
+            NaverMapRep(dark: scheme == .dark, lines: lines, pins: pins, circles: circles, fit: fit, showsUser: showsUser,
                         follow: follow, onTapPin: onTapPin)
         #endif
         #if canImport(GoogleMaps)
         case .google:
-            GoogleMapRep(lines: lines, pins: pins, circles: circles, fit: fit, showsUser: showsUser,
+            GoogleMapRep(dark: scheme == .dark, lines: lines, pins: pins, circles: circles, fit: fit, showsUser: showsUser,
                          follow: follow, user: user, onTapPin: onTapPin)
         #endif
         default:
@@ -227,6 +228,7 @@ private struct AppleMapRep: View {
 
 #if canImport(NMapsMap)
 private struct NaverMapRep: UIViewRepresentable {
+    let dark: Bool
     let lines: [MapLine]
     let pins: [MapPin]
     let circles: [MapCircleArea]
@@ -247,6 +249,13 @@ private struct NaverMapRep: UIViewRepresentable {
     func updateUIView(_ v: NMFMapView, context: Context) {
         let c = context.coordinator
         c.follow = follow
+        // 다크 모드: 네이버는 야간 모드가 내비 지도에서만 됨 → 다크일 때 내비 + 야간
+        if c.dark != dark {
+            c.dark = dark
+            v.mapType = dark ? .navi : .basic
+            v.isNightModeEnabled = dark
+            v.backgroundColor = dark ? .black : .white
+        }
         c.overlays.forEach { $0.mapView = nil }
         c.overlays = []
         for l in lines where l.coords.count > 1 {
@@ -271,8 +280,16 @@ private struct NaverMapRep: UIViewRepresentable {
         }
         for p in pins {
             let m = NMFMarker(position: NMGLatLng(lat: p.coord.latitude, lng: p.coord.longitude))
+            let img = PinImage.make(color: UIColor(p.color), symbol: p.symbol)
+            m.iconImage = NMFOverlayImage(image: img)
+            m.width = img.size.width
+            m.height = img.size.height
+            m.anchor = CGPoint(x: 0.5, y: 1)
             m.captionText = p.title
-            m.iconTintColor = UIColor(p.color)
+            m.captionTextSize = 12
+            m.captionColor = dark ? .white : .black
+            m.captionHaloColor = dark ? .black : .white
+            m.isHideCollidedCaptions = true
             let id = p.id, tap = onTapPin
             m.touchHandler = { _ in tap?(id); return true }
             m.mapView = v
@@ -297,6 +314,7 @@ private struct NaverMapRep: UIViewRepresentable {
 
     final class Coord: NSObject, NMFMapViewCameraDelegate {
         var overlays: [NMFOverlay] = []
+        var dark: Bool?
         var fitKey: String?
         var follow: Binding<Bool>?
 
@@ -313,6 +331,7 @@ private struct NaverMapRep: UIViewRepresentable {
 
 #if canImport(GoogleMaps)
 private struct GoogleMapRep: UIViewRepresentable {
+    let dark: Bool
     let lines: [MapLine]
     let pins: [MapPin]
     let circles: [MapCircleArea]
@@ -335,6 +354,7 @@ private struct GoogleMapRep: UIViewRepresentable {
         let c = context.coordinator
         c.follow = follow
         c.onTapPin = onTapPin
+        v.overrideUserInterfaceStyle = dark ? .dark : .light
         v.clear()
         for l in lines where l.coords.count > 1 {
             let path = GMSMutablePath()
@@ -358,7 +378,8 @@ private struct GoogleMapRep: UIViewRepresentable {
         for p in pins {
             let m = GMSMarker(position: p.coord)
             m.title = p.title
-            m.icon = GMSMarker.markerImage(with: UIColor(p.color))
+            m.icon = PinImage.make(color: UIColor(p.color), symbol: p.symbol)
+            m.groundAnchor = CGPoint(x: 0.5, y: 1)
             m.userData = p.id
             m.map = v
         }
@@ -392,3 +413,42 @@ private struct GoogleMapRep: UIViewRepresentable {
     }
 }
 #endif
+
+
+// MARK: - 핀 그림 (네이버·구글 공용, 애플 Marker 와 비슷한 모양: 색 원 + 흰 기호 + 아래 꼭지)
+
+enum PinImage {
+    private static var cache: [String: UIImage] = [:]
+
+    static func make(color: UIColor, symbol: String, size: CGFloat = 30) -> UIImage {
+        let key = "\(symbol)|\(color.description)|\(size)"
+        if let i = cache[key] { return i }
+        let tail: CGFloat = 7, pad: CGFloat = 3
+        let canvas = CGSize(width: size + pad * 2, height: size + tail + pad * 2)
+        let img = UIGraphicsImageRenderer(size: canvas).image { ctx in
+            let g = ctx.cgContext
+            let circle = CGRect(x: pad, y: pad, width: size, height: size)
+            g.setShadow(offset: CGSize(width: 0, height: 1), blur: 3, color: UIColor.black.withAlphaComponent(0.35).cgColor)
+            // 꼭지
+            let path = UIBezierPath()
+            path.move(to: CGPoint(x: canvas.width / 2 - 6, y: circle.maxY - 4))
+            path.addLine(to: CGPoint(x: canvas.width / 2, y: circle.maxY + tail))
+            path.addLine(to: CGPoint(x: canvas.width / 2 + 6, y: circle.maxY - 4))
+            path.close()
+            color.setFill(); path.fill()
+            // 원 + 흰 테두리
+            let ring = UIBezierPath(ovalIn: circle)
+            color.setFill(); ring.fill()
+            g.setShadow(offset: .zero, blur: 0, color: nil)
+            UIColor.white.setStroke(); ring.lineWidth = 2; ring.stroke()
+            // 기호
+            let cfg = UIImage.SymbolConfiguration(pointSize: size * 0.45, weight: .semibold)
+            if let sym = UIImage(systemName: symbol, withConfiguration: cfg)?.withTintColor(.white, renderingMode: .alwaysOriginal) {
+                sym.draw(in: CGRect(x: circle.midX - sym.size.width / 2, y: circle.midY - sym.size.height / 2,
+                                    width: sym.size.width, height: sym.size.height))
+            }
+        }
+        cache[key] = img
+        return img
+    }
+}

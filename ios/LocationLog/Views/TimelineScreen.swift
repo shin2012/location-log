@@ -132,7 +132,8 @@ struct TimelineScreen: View {
                         width: selected == it ? 6 : 4, dashed: it.mode == "car" && it.drove != true)
             },
             pins: items.filter(\.isVisit).compactMap { it in
-                it.center.map { MapPin(id: it.id, coord: $0, title: it.name ?? Fmt.hm(it.start), color: selected == it ? .red : .purple) }
+                it.center.map { MapPin(id: it.id, coord: $0, title: it.name ?? Fmt.hm(it.start), color: selected == it ? .red : .indigo,
+                                      symbol: it.checkin == true ? "checkmark" : "mappin") }
             },
             fit: fitReq,
             onTapPin: { id in if let it = items.first(where: { $0.id == id }) { select(it) } })
