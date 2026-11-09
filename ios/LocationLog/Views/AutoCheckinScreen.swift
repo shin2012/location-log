@@ -20,7 +20,7 @@ struct AutoCheckinScreen: View {
                 Section {
                     Toggle("자동 체크인", isOn: $auto.enabled)
                     LabeledContent("저장 방식", value: events.map { $0.write ? "체크인 저장" : "기록만 (확인 기간)" } ?? "—")
-                    LabeledContent("장소 감시", value: "\(auto.enabled ? auto.places.count : 0) / 19곳")
+                    LabeledContent("장소 감시", value: "\(auto.enabled ? auto.places.count : 0)곳")
                     if !auto.pending.isEmpty {
                         LabeledContent("보낼 기록", value: "\(auto.pending.count)건")
                         Button("지금 보내기") { Task { await auto.flush(); await load() } }
@@ -59,18 +59,18 @@ struct AutoCheckinScreen: View {
                                 .tint(pl.enabled == false ? .green : .gray)
                         }
                     }
-                    Button { adding = true } label: { Label("장소 추가", systemImage: "plus") }
+                    Button { startAdd() } label: { Label("장소 추가", systemImage: "plus") }
                         .disabled(settings.token.isEmpty)
                 } header: {
                     Text("장소 \(places.count)곳")
                 } footer: {
-                    Text("밀어서 끄거나 지울 수 있습니다. iOS는 앱 하나가 장소 20곳까지만 감시합니다(자동 기록이 1곳 사용).")
+                    Text("밀어서 끄거나 지울 수 있습니다.")
                 }
             }
             .navigationTitle("자동 체크인")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { adding = true } label: { Image(systemName: "plus") }
+                    Button { startAdd() } label: { Image(systemName: "plus") }
                         .accessibilityLabel("장소 추가")
                         .disabled(settings.token.isEmpty)
                 }
@@ -86,6 +86,13 @@ struct AutoCheckinScreen: View {
             .task { await load() }
             .refreshable { await load() }
         }
+    }
+
+    private var enabledCount: Int { places.filter { $0.enabled != false }.count }
+
+    /// 켜진 장소가 이미 최대면 추가 화면 대신 안내
+    private func startAdd() {
+        if enabledCount >= AutoCheckin.maxPlaces { toaster.show(AutoCheckin.maxMessage) } else { adding = true }
     }
 
     private func load() async {
@@ -116,12 +123,16 @@ struct AutoCheckinScreen: View {
     }
 
     private func toggle(_ pl: Binding<ACPlace>) async {
+        if pl.wrappedValue.enabled == false && enabledCount >= AutoCheckin.maxPlaces {
+            toaster.show(AutoCheckin.maxMessage)
+            return
+        }
         do {
             pl.wrappedValue = try await API.acPatch(pl.wrappedValue.venueId, ACPlacePatch(enabled: !(pl.wrappedValue.enabled ?? true)))
             await auto.refreshPlaces(force: true)
             toaster.show(pl.wrappedValue.enabled == false ? "\(pl.wrappedValue.name) 감시를 껐습니다" : "\(pl.wrappedValue.name) 감시를 켰습니다")
         } catch {
-            toaster.show("바꾸지 못했습니다: \(error.localizedDescription)")
+            toaster.show("바꾸지 못했습니다: \(PlaceDetailView.friendly(error))")
         }
     }
 }
@@ -221,6 +232,12 @@ struct PlaceDetailView: View {
         } message: { Text("지난 들어옴·나감 기록은 남습니다.") }
     }
 
+    /// 서버의 최대 개수 거절은 '서버 오류 409:' 없이 안내 문구만
+    static func friendly(_ e: Error) -> String {
+        let m = e.localizedDescription
+        return m.contains(AutoCheckin.maxMessage) ? AutoCheckin.maxMessage : m
+    }
+
     /// 원이 화면에 다 들어오게 맞출 네 점
     private func ring(_ c: CLLocationCoordinate2D, _ r: Double) -> [CLLocationCoordinate2D] {
         let dLat = r / 111_000, dLon = r / (111_000 * cos(c.latitude * .pi / 180))
@@ -259,7 +276,7 @@ struct PlaceDetailView: View {
         } catch {
             radius = Double(place.radius)
             name = place.name
-            toaster.show("저장하지 못했습니다: \(error.localizedDescription)")
+            toaster.show("저장하지 못했습니다: \(Self.friendly(error))")
         }
     }
 }
@@ -348,7 +365,7 @@ struct AddPlaceSheet: View {
             toaster.show("\(v.name) 추가했습니다")
             dismiss()
         } catch {
-            toaster.show("추가하지 못했습니다: \(error.localizedDescription)")
+            toaster.show("추가하지 못했습니다: \(PlaceDetailView.friendly(error))")
         }
     }
 }

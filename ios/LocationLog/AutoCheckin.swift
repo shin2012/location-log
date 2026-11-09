@@ -11,6 +11,9 @@ import UIKit
 final class AutoCheckin: ObservableObject {
     static let shared = AutoCheckin()
     static let prefix = "auto."
+    /// iOS 앱 하나가 감시할 수 있는 영역 20개 중 하루 기록('day.stay')이 1개 사용
+    static let maxPlaces = 19
+    static let maxMessage = "자동 체크인 장소는 최대 \(maxPlaces)곳까지 켤 수 있습니다"
 
     struct Place: Codable, Equatable, Identifiable {
         var venueId: String
@@ -74,7 +77,7 @@ final class AutoCheckin: ObservableObject {
 
     /// 켜져 있으면 장소마다 원형 영역 감시, 꺼져 있으면 모두 해제. ('day.stay' 같은 다른 영역은 건드리지 않음)
     func apply(_ manager: CLLocationManager) {
-        let want = enabled ? places : []
+        let want = enabled ? Array(places.prefix(Self.maxPlaces)) : []
         let ids = Set(want.map { Self.prefix + $0.venueId })
         for r in manager.monitoredRegions where r.identifier.hasPrefix(Self.prefix) && !ids.contains(r.identifier) {
             manager.stopMonitoring(for: r)

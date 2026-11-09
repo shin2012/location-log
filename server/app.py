@@ -437,6 +437,15 @@ import autocheckin  # noqa: E402
 AC_WRITE = os.environ.get("AUTOCHECKIN_WRITE", "0") == "1"   # 0 = 기록만 (함께 돌려 보는 기간)
 
 
+AC_MAX_PLACES = 19   # iOS 앱 하나가 감시할 수 있는 영역 20개 - 하루 기록 'day.stay' 1개
+AC_MAX_MSG = f"자동 체크인 장소는 최대 {AC_MAX_PLACES}곳까지 켤 수 있습니다"
+
+
+def _enabled_count(cur, exclude: str | None = None) -> int:
+    cur.execute("SELECT COUNT(*) AS n FROM auto_place WHERE enabled=1 AND venue_id<>%s", (exclude or "",))
+    return int(cur.fetchone()["n"])
+
+
 @app.get("/api/autocheckin/places")
 def ac_places(all: int = 0):
     """감시할 장소 (all=1 이면 꺼 둔 것도, enabled 포함)"""
@@ -517,6 +526,8 @@ def ac_place_add(body: PlaceNew, center: int = 1):
         cur.execute("SELECT 1 FROM auto_place WHERE venue_id=%s", (body.venue_id,))
         if cur.fetchone():
             raise HTTPException(409, "이미 등록된 장소")
+        if _enabled_count(cur) >= AC_MAX_PLACES:
+            raise HTTPException(409, AC_MAX_MSG)
         la, lo, n = _stay_center(cur, body.lat, body.lon) if center else (body.lat, body.lon, 0)
         cur.execute("INSERT INTO auto_place (venue_id, name, lat, lon, radius, enabled) VALUES (%s,%s,%s,%s,%s,1)",
                     (body.venue_id, body.name, la, lo, body.radius))
@@ -546,6 +557,8 @@ def ac_place_patch(venue_id: str, body: PlacePatch):
     if not sets:
         raise HTTPException(400, "바꿀 값 없음")
     with db() as cur:
+        if body.enabled and _enabled_count(cur, exclude=venue_id) >= AC_MAX_PLACES:
+            raise HTTPException(409, AC_MAX_MSG)
         n = cur.execute(f"UPDATE auto_place SET {', '.join(sets)} WHERE venue_id=%s", (*args, venue_id))
         cur.execute("SELECT venue_id, name, lat, lon, radius, enabled FROM auto_place WHERE venue_id=%s", (venue_id,))
         r = cur.fetchone()
