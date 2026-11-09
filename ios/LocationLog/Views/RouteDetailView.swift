@@ -11,7 +11,6 @@ struct RouteDetailView: View {
     @State private var camera: MapCameraPosition = .automatic
 
     var body: some View {
-        NavigationStack {
             Map(position: $camera) {
                 ForEach(Array(TrackGeometry.runs(points).enumerated()), id: \.offset) { _, run in
                     // GPS 끊김 구간 추정은 주황 점선 (웹판과 같음)
@@ -36,19 +35,17 @@ struct RouteDetailView: View {
                     .padding(.horizontal, 16)
                     .padding(.top, 10)
                     .padding(.bottom, 14)
-                    .background(Palette.bg)
-                    .overlay(alignment: .top) { Rectangle().fill(Palette.line).frame(height: 1) }
+                    .background(.bar)
             }
             .navigationTitle(item.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { dismiss() } label: { Image(systemName: "xmark") }
-                        .accessibilityLabel("닫기")
+                    NavigationLink { TrackPointsView(points: points) } label: { Image(systemName: "list.bullet") }
+                        .accessibilityLabel("점 목록")
                 }
             }
             .task { await load() }
-        }
     }
 
     private func load() async {
@@ -83,5 +80,27 @@ struct RouteDetailView: View {
         }
         let pad = max(rect.width, rect.height) * 0.15 + 500
         camera = .rect(rect.insetBy(dx: -pad, dy: -pad))
+    }
+}
+
+
+/// 기록의 점 목록 (예전 '기록 모드' 화면을 기록 상세 안으로)
+struct TrackPointsView: View {
+    let points: [TrackPoint]
+
+    var body: some View {
+        List(points.reversed(), id: \.seq) { p in
+            HStack {
+                Text(Fmt.hms(p.ts)).monospacedDigit()
+                Text(String(format: "%.5f, %.5f", p.lat, p.lon)).monospacedDigit().foregroundStyle(.secondary)
+                Spacer()
+                if p.src == "imu" { Text("추정").font(.caption.weight(.semibold)).foregroundStyle(.orange) }
+                Text(p.spd.map { "\(Int(($0 * 3.6).rounded()))km/h" } ?? "–").monospacedDigit().foregroundStyle(.secondary)
+            }
+            .font(.footnote)
+        }
+        .listStyle(.plain)
+        .navigationTitle("점 \(points.count.formatted())개")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

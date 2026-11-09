@@ -1,15 +1,20 @@
 import SwiftUI
 
+/// 시스템 색 (라이트·다크 자동). 예전 고정 다크 색 대신.
 enum Palette {
-    static let bg = Color(red: 0.043, green: 0.051, blue: 0.071)       // #0b0d12
-    static let card = Color(red: 0.071, green: 0.086, blue: 0.118).opacity(0.9)
-    static let line = Color.white.opacity(0.12)
-    static let dim = Color(red: 0.580, green: 0.639, blue: 0.722)      // #94a3b8
-    static let rec = Color(red: 0.937, green: 0.267, blue: 0.267)      // #ef4444
-    static let warn = Color(red: 0.961, green: 0.620, blue: 0.043)     // #f59e0b
-    static let ok = Color(red: 0.133, green: 0.773, blue: 0.369)       // #22c55e
-    static let blue = Color(red: 0.145, green: 0.388, blue: 0.922)     // #2563eb
-    static let route = Color(red: 0.145, green: 0.388, blue: 0.922)
+    static let bg = Color(uiColor: .systemBackground)
+    static let card = Color(uiColor: .secondarySystemBackground)
+    static let line = Color(uiColor: .separator)
+    static let dim = Color.secondary
+    static let rec = Color.red
+    static let warn = Color.orange
+    static let ok = Color.green
+    static let blue = Color.blue
+    static let route = Color.blue
+    static let drive = Color.red          // 운전 (CarPlay)
+    static let ride = Color.orange        // 차량 이동 (운전 아님)
+    static let walk = Color.green
+    static let bike = Color.teal
 }
 
 /// 잠깐 떴다 사라지는 안내
@@ -40,11 +45,9 @@ struct ToastView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
-                    .background(Color(red: 0.067, green: 0.094, blue: 0.153).opacity(0.95),
-                                in: RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Palette.line))
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                     .padding(.horizontal, 20)
-                    .padding(.bottom, 96)
+                    .padding(.bottom, 24)
                     .transition(.opacity)
             }
         }
@@ -91,21 +94,21 @@ struct CompassGauge: View {
 
     var body: some View {
         ZStack {
-            Circle().fill(Color.white.opacity(0.05))
-            Circle().stroke(Color.white.opacity(0.25), lineWidth: 1.2)
+            Circle().fill(Color.primary.opacity(0.05))
+            Circle().stroke(Color.primary.opacity(0.25), lineWidth: 1.2)
             ForEach(0..<4) { i in
                 Rectangle()
-                    .fill(Color.white.opacity(0.33))
+                    .fill(Color.primary.opacity(0.33))
                     .frame(width: 1.2, height: 2.6)
                     .offset(y: -12.5)
                     .rotationEffect(.degrees(Double(i) * 90))
             }
             Text("N")
                 .font(.system(size: 5.5, weight: .heavy))
-                .foregroundStyle(Color(red: 0.973, green: 0.443, blue: 0.443))
+                .foregroundStyle(.red)
                 .offset(y: -8.5)
             NeedleShape()
-                .fill(Color(red: 0.376, green: 0.647, blue: 0.980))
+                .fill(Color.blue)
                 .frame(width: 30, height: 30)
                 .rotationEffect(.degrees(needle))
                 .opacity(heading == nil ? 0.25 : 1)

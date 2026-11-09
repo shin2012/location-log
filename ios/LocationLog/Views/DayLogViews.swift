@@ -1,51 +1,121 @@
 import SwiftUI
 import MapKit
 import CoreLocation
+import CoreMotion
 
-/// 설정 › 하루 종일 기록
-struct DayLogSettingsView: View {
-    @ObservedObject var logger = DayLogger.shared
-    @ObservedObject var settings = DaySettings.shared
-    @ObservedObject var store = DayLogger.shared.store
-    @ObservedObject var motion = MotionHistory.shared
-    @ObservedObject var carplay = CarPlayWatcher.shared
-    @ObservedObject var cpEvents = CarPlayEvents.shared
-    @ObservedObject var auto = AutoCheckin.shared
-    @EnvironmentObject var toaster: Toaster
-    @State private var newPlaceName = ""
-
-    private var p: Binding<DayPrefs> { $settings.prefs }
+/// 설정 탭 (Form 묶음): 상태 요약 · 기록 · 서버 · 권한 · 정보
+struct SettingsScreen: View {
+    @EnvironmentObject var recorder: Recorder
+    @ObservedObject private var logger = DayLogger.shared
+    @ObservedObject private var store = DayLogger.shared.store
+    @ObservedObject private var settings = DaySettings.shared
+    @ObservedObject private var carplay = CarPlayWatcher.shared
+    @AppStorage("keepAwake") private var keepAwake = true
 
     var body: some View {
-        List {
-            Section {
-                Toggle("하루 종일 기록", isOn: p.enabled)
-                if settings.prefs.enabled {
-                    LabeledContent("상태", value: logger.statusText)
-                    LabeledContent("오늘 저장", value: "\(store.count(today).formatted())점")
-                    LabeledContent("오늘 GPS 사용", value: Fmt.durKo(logger.gpsSecondsToday * 1000))
-                    LabeledContent("서버 대기", value: AppSettings.shared.token.isEmpty ? "이 기기에만 저장" : "\(store.pendingCount.formatted())건")
-                    if let u = store.lastUploadAt { LabeledContent("마지막 업로드", value: Fmt.hm(u.timeIntervalSince1970 * 1000)) }
-                    if let e = store.lastError { Text(e).font(.caption).foregroundStyle(Palette.warn) }
-                    if let u = motion.lastUploadAt { LabeledContent("이동 방식·걸음 업로드", value: Fmt.hm(u.timeIntervalSince1970 * 1000)) }
-                    if let e = motion.lastError { Text(e).font(.caption).foregroundStyle(Palette.warn) }
-                    LabeledContent("CarPlay", value: (carplay.connected ? "연결됨" : "연결 안 됨") + (carplay.viaShortcut ? " · 단축어" : " · 오디오 경로"))
-                    if !cpEvents.pending.isEmpty { LabeledContent("CarPlay 보낼 기록", value: "\(cpEvents.pending.count)건") }
-                    if let e = cpEvents.lastError { Text("CarPlay: " + e).font(.caption).foregroundStyle(Palette.warn) }
-                    if logger.authorization != .authorizedAlways {
-                        Button("위치 권한 '항상 허용' 켜기") {
+        NavigationStack {
+            Form {
+                Section {
+                    LabeledContent("자동 기록", value: logger.running ? logger.statusText : "꺼짐")
+                    if logger.running {
+                        LabeledContent("오늘 GPS 사용", value: Fmt.durKo(logger.gpsSecondsToday * 1000))
+                        LabeledContent("서버 대기", value: AppSettings.shared.token.isEmpty ? "이 기기에만 저장" : "\(store.pendingCount.formatted())건")
+                        if let u = store.lastUploadAt { LabeledContent("마지막 업로드", value: Fmt.hm(u.timeIntervalSince1970 * 1000)) }
+                    }
+                } header: { Text("지금") }
+
+                Section {
+                    NavigationLink { AutoRecordSettingsView() } label: {
+                        LabeledContent { Text(settings.prefs.enabled ? "켜짐" : "꺼짐") } label: { Label("자동 기록", systemImage: "location.circle") }
+                    }
+                    NavigationLink { BatterySettingsView() } label: { Label("배터리", systemImage: "battery.75percent") }
+                    NavigationLink { DriveSettingsView() } label: {
+                        LabeledContent { Text(carplay.connected ? "연결됨" : "") } label: { Label("운전·CarPlay", systemImage: "car") }
+                    }
+                    NavigationLink { QuietSettingsView() } label: { Label("쉬는 시간·제외 장소", systemImage: "moon") }
+                    Toggle(isOn: $keepAwake) { Label("경로 기록 중 화면 켜 두기", systemImage: "sun.max") }
+                        .onChange(of: keepAwake) { _, _ in recorder.applyIdleTimer() }
+                } header: { Text("기록") }
+
+                Section {
+                    ServerConnectionRow()
+                    NavigationLink { UploadSettingsView() } label: { Label("올리기·보관", systemImage: "icloud.and.arrow.up") }
+                } header: { Text("서버") }
+
+                Section {
+                    LabeledContent("위치", value: locationAuth)
+                    LabeledContent("동작 및 피트니스", value: motionAuth)
+                    if logger.authorization != .authorizedAlways || CMMotionActivityManager.authorizationStatus() != .authorized {
+                        Button("설정 앱에서 권한 바꾸기") {
                             if logger.authorization == .notDetermined { logger.requestPermission() }
                             else if let u = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(u) }
                         }
                     }
+                } header: { Text("권한") } footer: {
+                    Text("자동 기록·자동 체크인은 위치 '항상 허용'이, 이동 방식·걸음은 '동작 및 피트니스'가 필요합니다.")
                 }
-                NavigationLink("날짜별 보기") { DayHistoryView() }
+
+                Section("정보") {
+                    LabeledContent("버전", value: version)
+                }
+            }
+            .navigationTitle("설정")
+        }
+    }
+
+    private var locationAuth: String {
+        switch logger.authorization {
+        case .authorizedAlways: return "항상"
+        case .authorizedWhenInUse: return "앱 사용 중에만"
+        case .denied: return "거부됨"
+        case .restricted: return "제한됨"
+        case .notDetermined: return "아직 묻지 않음"
+        @unknown default: return "알 수 없음"
+        }
+    }
+
+    private var motionAuth: String {
+        switch CMMotionActivityManager.authorizationStatus() {
+        case .authorized: return "허용"
+        case .denied: return "거부됨"
+        case .restricted: return "제한됨"
+        case .notDetermined: return "아직 묻지 않음"
+        @unknown default: return "알 수 없음"
+        }
+    }
+
+    private var version: String {
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "-"
+        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "-"
+        return "\(v) (\(b))"
+    }
+}
+
+/// 설정 › 자동 기록 (예전 '하루 종일 기록')
+struct AutoRecordSettingsView: View {
+    @ObservedObject var logger = DayLogger.shared
+    @ObservedObject var settings = DaySettings.shared
+    @ObservedObject var store = DayLogger.shared.store
+    @ObservedObject var motion = MotionHistory.shared
+    private var p: Binding<DayPrefs> { $settings.prefs }
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("자동 기록", isOn: p.enabled)
+                if settings.prefs.enabled {
+                    LabeledContent("상태", value: logger.statusText)
+                    LabeledContent("오늘 저장", value: "\(store.count(today).formatted())점")
+                    if let e = store.lastError { Text(e).font(.footnote).foregroundStyle(.orange) }
+                    if let u = motion.lastUploadAt { LabeledContent("이동 방식·걸음 업로드", value: Fmt.hm(u.timeIntervalSince1970 * 1000)) }
+                    if let e = motion.lastError { Text(e).font(.footnote).foregroundStyle(.orange) }
+                }
             } footer: {
                 Text("'기록 시작'을 누르지 않아도 하루 내내 위치를 저장합니다. 머무는 동안은 GPS를 꺼 두고, 움직이기 시작하면 켭니다. 이동 방식(걷기·차·자전거)과 1분 걸음도 함께 올립니다(iOS는 7일치만 보관). 앱을 위로 쓸어 강제로 끄면 다시 열 때까지 멈출 수 있습니다.")
             }
 
             Section {
-                Picker("기록 단계", selection: p.level) {
+                Picker("움직일 때 정확도", selection: p.level) {
                     ForEach(DayLevel.allCases) { Text($0.label).tag($0) }
                 }
                 .pickerStyle(.segmented)
@@ -88,37 +158,144 @@ struct DayLogSettingsView: View {
             }
 
             Section {
+                NavigationLink("날짜별 위치 점") { DayHistoryView() }
+            }
+        }
+        .navigationTitle("자동 기록")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var today: String { DayLogStore.dayKey(Date().timeIntervalSince1970 * 1000) }
+}
+
+/// 설정 › 배터리
+struct BatterySettingsView: View {
+    @ObservedObject var logger = DayLogger.shared
+    @ObservedObject var settings = DaySettings.shared
+    private var p: Binding<DayPrefs> { $settings.prefs }
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("지금", value: now)
                 Toggle("저전력 모드·배터리 20% 이하면 절약", isOn: p.lowPowerSave)
                 Toggle("충전 중이면 정밀하게", isOn: p.chargePrecise)
-                Toggle("차로 이동 + 충전 중이면 1초 기록", isOn: p.driveRecord)
                 Toggle("상단 위치 사용 표시", isOn: p.showIndicator)
-            } header: { Text("배터리") } footer: {
-                Text("절약으로 바뀌면 움직일 때 정확도를 낮추고 머무는 동안 GPS 확인을 멈춥니다. 충전 중에는 움직일 때 '정밀', 머무는 동안 3분마다 확인합니다. 차로 이동(CarPlay 연결 또는 차량 움직임)하며 충전 중이면 경로 기록을 자동으로 켜 1초마다 저장하고, 터널처럼 GPS가 끊기면 센서로 이어 그립니다. 내려서 3분(CarPlay 해제 뒤 1분) 지나면 끕니다. 폰이 뜨거우면 둘 다 멈춥니다.")
+            } footer: {
+                Text("절약으로 바뀌면 움직일 때 정확도를 낮추고 머무는 동안 GPS 확인을 멈춥니다. 충전 중에는 움직일 때 '정밀', 머무는 동안 3분마다 확인합니다. 폰이 뜨거우면 충전 중 정밀을 멈춥니다.")
             }
+        }
+        .navigationTitle("배터리")
+        .navigationBarTitleDisplayMode(.inline)
+    }
 
+    private var now: String {
+        var parts: [String] = []
+        if logger.charging { parts.append("충전 중") }
+        if logger.lowBattery { parts.append("배터리 부족") }
+        if logger.hot { parts.append("폰이 뜨거움") }
+        return parts.isEmpty ? "보통" : parts.joined(separator: " · ")
+    }
+}
+
+/// 설정 › 운전·CarPlay
+struct DriveSettingsView: View {
+    @ObservedObject var logger = DayLogger.shared
+    @ObservedObject var settings = DaySettings.shared
+    @ObservedObject var carplay = CarPlayWatcher.shared
+    @ObservedObject var cpEvents = CarPlayEvents.shared
+    private var p: Binding<DayPrefs> { $settings.prefs }
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("차로 이동 + 충전 중이면 1초 기록", isOn: p.driveRecord)
+                if logger.autoDriving { LabeledContent("지금", value: "자동 1초 기록 중") }
+            } footer: {
+                Text("차로 이동(CarPlay 연결 또는 차량 움직임)하며 충전 중이면 경로 기록을 자동으로 켜 1초마다 저장하고, 터널처럼 GPS가 끊기면 센서로 이어 그립니다. 내려서 3분(CarPlay 해제 뒤 1분) 지나면 끕니다. 폰이 뜨거우면 멈춥니다.")
+            }
             Section {
                 Toggle("CarPlay 연결 기록 보내기", isOn: p.carplaySend)
+                LabeledContent("상태", value: (carplay.connected ? "연결됨" : "연결 안 됨") + (carplay.viaShortcut ? " · 단축어" : " · 소리 출력 경로로 짐작"))
+                if !cpEvents.pending.isEmpty { LabeledContent("보낼 기록", value: "\(cpEvents.pending.count)건") }
+                if let e = cpEvents.lastError { Text(e).font(.footnote).foregroundStyle(.orange) }
             } header: { Text("CarPlay") } footer: {
-                Text("CarPlay에 연결·해제되면 시각과 위치를 데일리요섭(swarm 지도)으로 보냅니다. 연결되면 '내가 운전', 연결 없이 차로 움직이면 '차량 이동'으로 구분합니다.\n가장 정확한 방법: 단축어 › 자동화 › CarPlay › '연결 시'에 동작 '실라쥬 › CarPlay 연결 기록하기', '연결 해제 시'에 'CarPlay 연결 해제 기록하기'를 넣으세요. 한 번 받으면 그 뒤로는 단축어 신호만 씁니다. 설정 전에는 소리 출력 경로로 짐작합니다.")
+                Text("CarPlay에 연결되면 '내가 운전', 연결 없이 차로 움직이면 '차량 이동'으로 구분합니다.")
             }
-
             Section {
-                Toggle("자동 체크인", isOn: $auto.enabled)
-                ForEach(auto.places) { pl in
+                Label("단축어 앱 › 자동화 › 새로운 자동화 › CarPlay", systemImage: "1.circle")
+                Label("'연결 시' › 동작 '실라쥬 › CarPlay 연결 기록하기'", systemImage: "2.circle")
+                Label("'연결 해제 시' › 동작 '실라쥬 › CarPlay 연결 해제 기록하기'", systemImage: "3.circle")
+                Label("두 자동화 모두 '즉시 실행'", systemImage: "4.circle")
+            } header: { Text("단축어 설정 (가장 정확)") } footer: {
+                Text("한 번 받으면 그 뒤로는 단축어 신호만 씁니다. 설정 전에는 소리 출력 경로로 짐작합니다.")
+            }
+        }
+        .navigationTitle("운전·CarPlay")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// 설정 › 쉬는 시간·제외 장소
+struct QuietSettingsView: View {
+    @ObservedObject var logger = DayLogger.shared
+    @ObservedObject var settings = DaySettings.shared
+    @EnvironmentObject var toaster: Toaster
+    @State private var newPlaceName = ""
+    private var p: Binding<DayPrefs> { $settings.prefs }
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("쉬는 시간", isOn: p.quietOn)
+                if settings.prefs.quietOn {
+                    Picker("시작", selection: p.quietStart) { ForEach(0..<24, id: \.self) { Text("\($0)시").tag($0) } }
+                    Picker("끝", selection: p.quietEnd) { ForEach(0..<24, id: \.self) { Text("\($0)시").tag($0) } }
+                }
+            } header: { Text("기록 안 할 시간") } footer: {
+                Text("이 시간에는 저장하지 않고 GPS도 켜지 않습니다.")
+            }
+            Section {
+                ForEach(settings.prefs.excluded) { pl in
                     LabeledContent(pl.name, value: "반경 \(Int(pl.radius))m")
                 }
-                if auto.places.isEmpty { Text("장소 목록을 아직 못 받았습니다").font(.caption).foregroundStyle(.secondary) }
-                if !auto.pending.isEmpty { LabeledContent("보낼 기록", value: "\(auto.pending.count)건") }
-                if let e = auto.lastError { Text(e).font(.caption).foregroundStyle(Palette.warn) }
-                ForEach(auto.recent.prefix(8)) { l in
-                    LabeledContent(l.name, value: (l.kind == "enter" ? "들어옴 " : "나감 ") + Fmt.hm(l.at.timeIntervalSince1970 * 1000))
-                        .font(.caption)
+                .onDelete { settings.prefs.excluded.remove(atOffsets: $0) }
+                HStack {
+                    TextField("이름 (예: 집)", text: $newPlaceName)
+                    Button("지금 위치 추가") { addPlace() }
+                        .buttonStyle(.borderless)
                 }
-                Button("장소 목록 다시 받기") { Task { await auto.refreshPlaces(force: true) } }
-            } header: { Text("자동 체크인") } footer: {
-                Text("집·회사처럼 서버에 등록한 장소 반경에 들어가면 체크인, 나가면 퇴근(이탈)으로 기록합니다. 3분 넘게 머물러야 체크인이 되고, 나갔다가 15분 안에 다시 들어오면 나간 것으로 치지 않습니다. 시각은 들어간·나간 순간입니다. 위치 권한 '항상 허용'이 필요합니다.")
+            } header: { Text("기록 안 할 장소") } footer: {
+                Text("이 장소 반경 150m 안의 위치·머문 곳은 저장하지 않습니다. 밀어서 지울 수 있습니다.")
             }
+        }
+        .navigationTitle("쉬는 시간·제외 장소")
+        .navigationBarTitleDisplayMode(.inline)
+    }
 
+    private func addPlace() {
+        guard let l = logger.currentLocation(), l.horizontalAccuracy >= 0, l.horizontalAccuracy < 200 else {
+            toaster.show("지금 위치를 아직 모릅니다")
+            return
+        }
+        let name = newPlaceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.prefs.excluded.append(.init(name: name.isEmpty ? "장소 \(settings.prefs.excluded.count + 1)" : name,
+                                             lat: l.coordinate.latitude, lon: l.coordinate.longitude))
+        newPlaceName = ""
+        toaster.show("추가했습니다")
+    }
+}
+
+/// 설정 › 서버 › 올리기·보관
+struct UploadSettingsView: View {
+    @ObservedObject var logger = DayLogger.shared
+    @ObservedObject var settings = DaySettings.shared
+    @ObservedObject var store = DayLogger.shared.store
+    @EnvironmentObject var toaster: Toaster
+    private var p: Binding<DayPrefs> { $settings.prefs }
+
+    var body: some View {
+        Form {
             Section {
                 Picker("올리는 간격", selection: p.uploadMinutes) {
                     ForEach([15, 30, 60, 180], id: \.self) { Text($0 < 60 ? "\($0)분" : "\($0 / 60)시간").tag($0) }
@@ -134,50 +311,97 @@ struct DayLogSettingsView: View {
                 Picker("이 기기 보관", selection: p.keepDays) {
                     ForEach([30, 90, 365], id: \.self) { Text("\($0)일").tag($0) }
                 }
-            } header: { Text("서버") } footer: {
+            } footer: {
                 Text("점마다 보내지 않고 모아서 올립니다(통신도 배터리를 씀). 서버에 올라간 기록만 보관 기간이 지나면 이 기기에서 지웁니다.")
             }
-
-            Section {
-                Toggle("쉬는 시간", isOn: p.quietOn)
-                if settings.prefs.quietOn {
-                    Picker("시작", selection: p.quietStart) { ForEach(0..<24, id: \.self) { Text("\($0)시").tag($0) } }
-                    Picker("끝", selection: p.quietEnd) { ForEach(0..<24, id: \.self) { Text("\($0)시").tag($0) } }
-                }
-            } header: { Text("기록 안 할 시간") } footer: {
-                Text("이 시간에는 저장하지 않고 GPS도 켜지 않습니다.")
-            }
-
-            Section {
-                ForEach(settings.prefs.excluded) { pl in
-                    LabeledContent(pl.name, value: "반경 \(Int(pl.radius))m")
-                }
-                .onDelete { settings.prefs.excluded.remove(atOffsets: $0) }
-                HStack {
-                    TextField("이름 (예: 집)", text: $newPlaceName)
-                    Button("지금 위치 추가") { addPlace() }
-                        .buttonStyle(.borderless)
-                }
-            } header: { Text("기록 안 할 장소") } footer: {
-                Text("이 장소 반경 150m 안의 위치·머문 곳은 저장하지 않습니다. 밀어서 지울 수 있습니다.")
-            }
         }
-        .navigationTitle("하루 종일 기록")
+        .navigationTitle("올리기·보관")
         .navigationBarTitleDisplayMode(.inline)
     }
+}
 
-    private var today: String { DayLogStore.dayKey(Date().timeIntervalSince1970 * 1000) }
+/// 서버 연결: 연결돼 있으면 상태만, '수정'을 누르면 시트에서 주소·토큰 입력
+struct ServerConnectionRow: View {
+    @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject var toaster: Toaster
+    @State private var editing = false
+    @State private var ok: Bool?
+    @State private var detail = ""
 
-    private func addPlace() {
-        guard let l = logger.currentLocation(), l.horizontalAccuracy >= 0, l.horizontalAccuracy < 200 else {
-            toaster.show("지금 위치를 아직 모릅니다")
-            return
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: settings.token.isEmpty ? "iphone" : ok == false ? "exclamationmark.icloud" : "checkmark.icloud")
+                .foregroundStyle(settings.token.isEmpty ? Color.secondary : ok == false ? Color.red : Color.green)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(settings.token.isEmpty ? "연결 안 함" : ok == nil ? "확인 중…" : ok == true ? "연결됨" : "연결 안 됨")
+                Text(settings.token.isEmpty ? "기록은 이 기기에만 저장됩니다" : detail.isEmpty ? host : detail)
+                    .font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+            }
+            Spacer()
+            Button(settings.token.isEmpty ? "연결" : "수정") { editing = true }
+                .buttonStyle(.borderless)
         }
-        let name = newPlaceName.trimmingCharacters(in: .whitespacesAndNewlines)
-        settings.prefs.excluded.append(.init(name: name.isEmpty ? "장소 \(settings.prefs.excluded.count + 1)" : name,
-                                             lat: l.coordinate.latitude, lon: l.coordinate.longitude))
-        newPlaceName = ""
-        toaster.show("추가했습니다")
+        .task(id: settings.token) { await check() }
+        .sheet(isPresented: $editing) { ServerEditSheet { await check() } }
+    }
+
+    private var host: String { URL(string: settings.baseURL)?.host ?? settings.baseURL }
+
+    private func check() async {
+        guard !settings.token.isEmpty else { ok = nil; return }
+        ok = nil
+        do { _ = try await API.days(); ok = true; detail = "" } catch { ok = false; detail = error.localizedDescription }
+    }
+}
+
+struct ServerEditSheet: View {
+    @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject var toaster: Toaster
+    @Environment(\.dismiss) private var dismiss
+    let onSaved: () async -> Void
+    @State private var url = ""
+    @State private var token = ""
+    @State private var checking = false
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("서버 주소", text: $url)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                    SecureField("앱 토큰 (비우면 이 기기에만 저장)", text: $token)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                } footer: {
+                    Text(error ?? "토큰을 비워 두면 기록은 이 기기에만 저장됩니다. 토큰을 넣으면 개인 서버와 동기화합니다.")
+                        .foregroundStyle(error == nil ? Color.secondary : Color.red)
+                }
+            }
+            .navigationTitle("서버")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("취소") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(checking ? "확인 중…" : "저장") { Task { await save() } }.disabled(checking)
+                }
+            }
+            .onAppear { url = settings.baseURL; token = settings.token }
+        }
+        .presentationDetents([.medium])
+    }
+
+    private func save() async {
+        checking = true
+        defer { checking = false }
+        let u = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.baseURL = u.isEmpty ? AppSettings.defaultBaseURL : u
+        settings.token = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !settings.token.isEmpty {
+            do { _ = try await API.days() } catch { self.error = error.localizedDescription; return }
+        }
+        await onSaved()
+        toaster.show(settings.token.isEmpty ? "이 기기에만 저장합니다" : "서버에 연결됨")
+        dismiss()
     }
 }
 
@@ -208,7 +432,7 @@ struct DayHistoryView: View {
                 }
             }
         }
-        .navigationTitle("날짜별 보기")
+        .navigationTitle("날짜별 위치 점")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .refreshable { await load() }

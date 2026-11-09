@@ -20,7 +20,7 @@ struct MapModeView: View {
             }
         }
         .mapControls { MapScaleView() }
-        .ignoresSafeArea()
+        .ignoresSafeArea(edges: .horizontal)
         .overlay(alignment: .top) {
             VStack(alignment: .trailing, spacing: 10) {
                 overlayCard
@@ -29,7 +29,7 @@ struct MapModeView: View {
                 } label: {
                     Image(systemName: camera.followsUserLocation ? "location.fill" : "location")
                         .font(.system(size: 18))
-                        .foregroundStyle(camera.followsUserLocation ? Color(red: 0.376, green: 0.647, blue: 0.980) : .white)
+                        .foregroundStyle(camera.followsUserLocation ? Color.blue : Color.primary)
                         .frame(width: 44, height: 44)
                         .background(.ultraThinMaterial, in: Circle())
                         .overlay(Circle().stroke(Palette.line))
@@ -71,9 +71,7 @@ struct MapModeView: View {
             .padding(.top, 8)
             .padding(.bottom, 7)
             .frame(maxWidth: .infinity)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
-            .background(Palette.card, in: RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(Palette.line))
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
         }
     }
 

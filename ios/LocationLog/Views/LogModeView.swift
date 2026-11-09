@@ -41,7 +41,7 @@ struct LogModeView: View {
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .padding(.bottom, 10)
-            .background(Color(red: 0.059, green: 0.075, blue: 0.102))
+            .background(Palette.card)
             .overlay(alignment: .bottom) { Rectangle().fill(Palette.line).frame(height: 1) }
         }
     }
@@ -59,7 +59,7 @@ struct LogModeView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Palette.line))
     }
 
@@ -111,10 +111,10 @@ struct LogModeView: View {
                     case .gap(_, let text):
                         Text(text)
                             .font(.system(size: 12))
-                            .foregroundStyle(Color(red: 0.392, green: 0.455, blue: 0.545))
+                            .foregroundStyle(.tertiary)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 8)
-                            .overlay(alignment: .bottom) { Rectangle().fill(Color.white.opacity(0.05)).frame(height: 1) }
+                            .overlay(alignment: .bottom) { Rectangle().fill(Palette.line).frame(height: 1) }
                     case .point(let p, let last):
                         pointRow(p, last: last).id(r.id)
                     }
@@ -136,34 +136,20 @@ struct LogModeView: View {
                 Text(p.spd.map { "\(Int(($0 * 3.6).rounded()))" } ?? "–")
                 Text("km/h").font(.system(size: 10)).foregroundStyle(Palette.dim)
             }
-            .foregroundStyle(Color(red: 0.796, green: 0.835, blue: 0.882))
+            .foregroundStyle(.primary)
             .frame(width: 64, alignment: .trailing)
         }
         .font(.system(size: 14))
         .monospacedDigit()
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(last ? Color(red: 0.231, green: 0.510, blue: 0.965).opacity(0.1) : .clear)
-        .overlay(alignment: .bottom) { Rectangle().fill(Color.white.opacity(0.05)).frame(height: 1) }
+        .background(last ? Color.blue.opacity(0.1) : .clear)
+        .overlay(alignment: .bottom) { Rectangle().fill(Palette.line).frame(height: 1) }
         .textSelection(.enabled)
     }
 
     private var idle: some View {
-        VStack(spacing: 10) {
-            Spacer()
-            Text("📍")
-                .font(.system(size: 26))
-                .frame(width: 64, height: 64)
-                .overlay(Circle().stroke(Color.white.opacity(0.15), lineWidth: 2))
-            Text("기록 중이 아닙니다").font(.system(size: 18, weight: .bold))
-            (Text("아래 ") + Text("● 기록 시작").bold() + Text("을 누르면\n위치가 여기에 시간순으로 쌓입니다"))
-                .font(.system(size: 14))
-                .foregroundStyle(Palette.dim)
-                .multilineTextAlignment(.center)
-                .lineSpacing(4)
-            Spacer()
-            Spacer().frame(height: 120)
-        }
-        .frame(maxWidth: .infinity)
+        ContentUnavailableView("경로 기록 중이 아닙니다", systemImage: "record.circle",
+                               description: Text("아래 '기록 시작'을 누르면 위치가 여기에 시간순으로 쌓입니다."))
     }
 }

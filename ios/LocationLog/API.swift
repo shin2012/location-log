@@ -21,7 +21,7 @@ struct PatchBody: Encodable {
     var mode: String?
 }
 
-/// location.b-612.kr/app-api — 웹과 같은 FastAPI. 로그인 대신 Bearer 토큰.
+/// location.b-612.kr/app-api — 실라쥬 전용 FastAPI. Bearer 토큰.
 enum API {
     private static let decoder: JSONDecoder = {
         let d = JSONDecoder()
@@ -74,6 +74,13 @@ enum API {
     static func days() async throws -> [ServerDay] { try await send("GET", "day") }
     static func day(_ date: String) async throws -> ServerDayDetail { try await send("GET", "day/\(date)") }
     static func deleteDay(_ date: String) async throws { let _: OKResponse = try await send("DELETE", "day/\(date)") }
+    static func timeline(_ date: String) async throws -> TimelineDay { try await send("GET", "day/\(date)/timeline") }
+    // 자동 체크인
+    static func acPlaces() async throws -> [ACPlace] { try await send("GET", "autocheckin/places?all=1") }
+    static func acPatch(_ venueId: String, _ body: ACPlacePatch) async throws -> ACPlace {
+        try await send("PATCH", "autocheckin/places/\(venueId)", body: body)
+    }
+    static func acEvents(days: Int = 7) async throws -> ACEvents { try await send("GET", "autocheckin/events?days=\(days)") }
 
     static func health() async throws -> Bool {
         let r: OKResponse = try await send("GET", "health")
