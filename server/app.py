@@ -664,7 +664,8 @@ def ac_process(now: datetime | None = None) -> dict:
     with _ac_lock, db() as cur:
         cur.execute("SELECT DISTINCT venue_id FROM place_event WHERE status='pending' "
                     "OR (status='failed' AND kind='enter' AND at > %s) "
-                    "OR (status='confirmed' AND adj_at IS NULL AND at > %s)", (now - timedelta(days=1), now - timedelta(days=1)))
+                    "OR (status='confirmed' AND (adj_at IS NULL OR (kind='enter' AND fsq_id IS NULL)) AND at > %s)",
+                    (now - timedelta(days=1), now - timedelta(days=1)))
         for (vid,) in [(r["venue_id"],) for r in cur.fetchall()]:
             cur.execute("SELECT id, kind, at, status, received_at AS recv FROM place_event WHERE venue_id=%s AND at > %s ORDER BY at, id",
                         (vid, now - timedelta(days=2)))
