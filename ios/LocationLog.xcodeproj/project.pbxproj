@@ -229,7 +229,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.2.1;
+				MARKETING_VERSION = 1.2.2;
 				PRODUCT_BUNDLE_IDENTIFIER = kr.b-612.sillage;
 				NAVER_MAP_KEY_ID = "";
 				GOOGLE_MAPS_KEY = "";
@@ -262,7 +262,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.2.1;
+				MARKETING_VERSION = 1.2.2;
 				PRODUCT_BUNDLE_IDENTIFIER = kr.b-612.sillage;
 				NAVER_MAP_KEY_ID = "";
 				GOOGLE_MAPS_KEY = "";
