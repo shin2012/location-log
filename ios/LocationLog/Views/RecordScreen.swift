@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// 경로 기록 (수동): 지도 또는 실시간 점 목록 + 이동 수단 + 시작/종료. 지난 기록은 툴바 '목록'.
+/// 경로 기록 (수동): 지도 또는 실시간 점 목록 + 시작/종료. 이동 수단은 끝날 때 자동 인식(목록에서 변경). 지난 기록은 툴바 '목록'.
+/// 자동 운전 1초 기록과는 상관없음 (그건 하루 기록에만 저장).
 struct RecordScreen: View {
     @EnvironmentObject var recorder: Recorder
     @EnvironmentObject var toaster: Toaster
@@ -43,10 +44,6 @@ struct RecordScreen: View {
 
     private var controls: some View {
         VStack(spacing: 10) {
-            Picker("이동 수단", selection: $recorder.mode) {
-                ForEach(TravelMode.allCases) { m in Label(m.label, systemImage: m.symbol).tag(m) }
-            }
-            .pickerStyle(.segmented)
             Button {
                 if recorder.isRecording { confirmStop = true } else { haptic.toggle(); recorder.start() }
             } label: {
@@ -58,8 +55,8 @@ struct RecordScreen: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .tint(recorder.isRecording ? .red : .accentColor)
-            if recorder.isRecording && recorder.isAuto {
-                Text("충전 중 차로 이동해 자동으로 켠 기록입니다. 내리면 자동으로 끝납니다.")
+            if !recorder.isRecording {
+                Text("이동 수단은 기록이 끝나면 자동으로 정해집니다. 목록에서 바꿀 수 있습니다.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }

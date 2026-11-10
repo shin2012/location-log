@@ -13,6 +13,7 @@ struct TrackItem: Identifiable {
     let nEst: Int
     let sentDailyAt: Double?
     let mode: TravelMode
+    let modeAuto: Bool
     let recording: Bool
     let localOnly: Bool     // 서버 목록에 아직 없음 (업로드 대기 / 토큰 없음)
 
@@ -22,6 +23,7 @@ struct TrackItem: Identifiable {
         clientId = t.clientId; serverId = t.serverId; name = t.name
         startedAt = t.startedAt; endedAt = t.endedAt; distanceM = t.distanceM
         nPoints = t.points.count; nEst = 0; sentDailyAt = nil; mode = t.mode
+        modeAuto = t.modeAuto == true && t.guessing != true
         self.recording = recording; localOnly = true
     }
 
@@ -30,6 +32,7 @@ struct TrackItem: Identifiable {
         startedAt = s.startedAt ?? 0; endedAt = s.endedAt; distanceM = s.distanceM ?? 0
         nPoints = s.nPoints ?? 0; nEst = s.nEst ?? 0; sentDailyAt = s.sentDailyAt
         mode = TravelMode(rawValue: s.mode ?? "car") ?? .car
+        modeAuto = s.modeAuto == true
         self.recording = recording; localOnly = false
     }
 }
@@ -58,7 +61,7 @@ struct TrackListView: View {
                     HStack { Spacer(); ProgressView(); Spacer() }
                 } else {
                     ContentUnavailableView("저장된 경로 기록이 없습니다", systemImage: "point.topleft.down.to.point.bottomright.curvepath",
-                                           description: Text(loadError.map { "서버 목록을 못 불러왔습니다 (\($0))" } ?? "'기록 시작'을 누르거나, 충전하며 차로 이동하면 자동으로 기록됩니다."))
+                                           description: Text(loadError.map { "서버 목록을 못 불러왔습니다 (\($0))" } ?? "'기록 시작'을 누르면 여기에 저장됩니다."))
                 }
             }
             ForEach(items) { item in
@@ -94,19 +97,12 @@ struct TrackRow: View {
     @State private var newName = ""
     @State private var confirmDelete = false
 
-    /// 자동 운전 기록 (이름이 '운전 · …' / '차량 이동 · …')
-    private var autoKind: String? {
-        if item.name.hasPrefix("운전 · ") { return "운전" }
-        if item.name.hasPrefix("차량 이동 · ") { return "차량 이동" }
-        return nil
-    }
-
     var body: some View {
         NavigationLink {
             RouteDetailView(item: item)
         } label: {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: autoKind == "운전" ? "steeringwheel" : item.mode.symbol)
+                Image(systemName: item.mode.symbol)
                     .font(.title3)
                     .foregroundStyle(item.recording ? Color.red : Color.accentColor)
                     .frame(width: 28)
@@ -115,7 +111,9 @@ struct TrackRow: View {
                     Text(meta).font(.subheadline).foregroundStyle(.secondary).monospacedDigit()
                     HStack(spacing: 6) {
                         if item.recording { badge("기록 중", .red) }
-                        if autoKind != nil { badge("자동", .blue) }
+                        if !item.recording {
+                            badge(item.mode.label + (item.modeAuto ? " · 자동" : ""), item.modeAuto ? .blue : .secondary)
+                        }
                         if item.localOnly && !item.recording {
                             badge(AppSettings.shared.token.isEmpty ? "이 기기" : "업로드 대기", .gray)
                         }
@@ -183,12 +181,12 @@ struct TrackRow: View {
     }
 
     private func setMode(_ m: TravelMode) async {
-        guard m != item.mode else { return }
+        guard m != item.mode || item.modeAuto else { return }
         do {
             if let sid = item.serverId, !AppSettings.shared.token.isEmpty {
-                _ = try await API.patch(sid, PatchBody(mode: m.rawValue))
+                _ = try await API.patch(sid, PatchBody(mode: m.rawValue, modeAuto: false))
             }
-            if item.recording { recorder.mode = m } else { store.setMode(m, for: item.clientId) }
+            if store.track(item.clientId) != nil { store.setMode(m, for: item.clientId) }
             toaster.show("\(m.emoji) \(m.label)(으)로 변경")
             await reload()
         } catch {

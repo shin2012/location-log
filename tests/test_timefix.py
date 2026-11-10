@@ -64,22 +64,6 @@ def test_arrive_late_detection():
     assert F.stop_time(pts, T(7, 55), C, 90) == T(7, 50)
 
 
-def test_drive_cut():
-    # 실제 기록 33 끝: 07:51:21 2.24m/s(마지막 주행) → 07:51:39 0.2 → 이후 걷기 1.5m/s
-    sp = [(T(7, 51, 10), 8.4), (T(7, 51, 21), 2.24), (T(7, 51, 24), 1.9), (T(7, 51, 39), 0.2),
-          (T(7, 52, 19), 1.65), (T(7, 52, 32), 1.5), (T(7, 54, 26), None)]
-    pts = [{"ts": t, "spd": s} for t, s in sp]
-    assert F.drive_cut(pts, T(7, 51, 58)) == T(7, 51, 39)
-    assert F.drive_cut(pts, T(7, 55)) is None                       # 신호 뒤에 점 없음 → 안 자름
-
-
-def test_drive_anchor():
-    a = acts((T(7, 19), "car"), (T(7, 52, 17), "walk"))
-    assert F.drive_anchor(T(7, 51, 58), a, T(7, 18), T(7, 54)) == T(7, 51, 58)
-    assert F.drive_anchor(None, a, T(7, 18), T(7, 54)) == T(7, 52, 17)
-    assert F.drive_anchor(None, acts((T(7, 19), "car")), T(7, 18), T(7, 54)) is None
-
-
 if __name__ == "__main__":
     n = 0
     for k, f in list(globals().items()):

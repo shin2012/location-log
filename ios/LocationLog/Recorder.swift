@@ -9,7 +9,10 @@ import UIKit
 /// - 기록 중이면 화면이 꺼져도(백그라운드) 계속 받음
 @MainActor
 final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
+    /// 경로 기록(수동, '경로 기록' 메뉴) 중. 자동 운전과 상관없음
     @Published private(set) var isRecording = false
+    /// 자동 운전 1초 기록 중 — 하루 기록에만 들어가고 경로 기록은 만들지 않음
+    @Published private(set) var autoActive = false
     @Published private(set) var authorization: CLAuthorizationStatus = .notDetermined
     @Published private(set) var lastLocation: CLLocation?   // 받은 마지막 위치(정확도 상관없이)
     @Published private(set) var lastGood: CLLocation?       // 정확도 통과한 마지막 위치
@@ -18,28 +21,27 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published private(set) var gpsError: String?
     @Published private(set) var estimating = false          // 센서로 이어 그리는 중
     @Published private(set) var lastCorrection: DeadReckoner.Correction?
-    @Published var mode: TravelMode = .car {
-        didSet {
-            manager.activityType = mode.activityType
-            if isRecording { store.setMode(mode) }
-        }
-    }
+
+    /// 1초 기록 엔진이 켜져 있음 (수동 기록 또는 자동 운전)
+    var engineOn: Bool { isRecording || autoActive }
+    /// 지금 인식된 동작 (하루 기록에서 넘겨줌) → 위치 수신 종류
+    var activityHint: DayActivity = .unknown { didSet { if oldValue != activityHint { applyActivityType() } } }
+    /// 발열 '심각' 이상 → 정밀도 한 단계 낮춤 (내비게이션용 최고 → 일반 최고). 1초 간격·센서 추정은 그대로
+    var reducedAccuracy = false { didSet { if oldValue != reducedAccuracy { applyAccuracy() } } }
 
     static let maxAccuracy: Double = 40     // m — 이보다 나쁘면 버림
     static let maxSpeed: Double = 70        // m/s — 이보다 빠르면 튀는 값으로 봄
     static let longGap: Double = 120        // s — 이만큼 끊겼으면 순간 이동도 받아들임
     static let lossSec: Double = 3          // s — 움직이다 이만큼 못 받으면 'GPS 신호 약함'
     static let moveSpeed: Double = 2.5      // m/s
-    static let minStep: Double = 5          // m — 직전 저장점에서 이만큼 안 움직였으면 저장 안 함(정차 중 중복)
+    static let minStep: Double = 5          // m — 경로 기록: 직전 저장점에서 이만큼 안 움직였으면 저장 안 함(정차 중 중복)
 
     let store: TrackStore
-    /// 하루 종일 기록에 넘김: 기록 중 받은 좋은 위치 / 기록 켜고 끔
+    /// 하루 종일 기록에 넘김: 엔진이 받은 좋은 위치 / 엔진 켜고 끔
     var onFix: ((CLLocation) -> Void)?
-    var onRecordingChanged: ((Bool) -> Void)?
+    var onEngineChanged: ((Bool) -> Void)?
     /// 센서로 만든 추정점(터널 등). 보정되면 같은 시각 점으로 다시 넘어옴
     var onEstimate: ((TrackPoint) -> Void)?
-    /// 하루 종일 기록이 자동으로 켠 운전 기록인지
-    @Published private(set) var isAuto = false
     private let manager = CLLocationManager()
     private var bgSession: CLBackgroundActivitySession?
     private var lastAccepted: TrackPoint?
@@ -48,7 +50,8 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
     private var inForeground = true
     private let motion = CMMotionManager()
     private let reckoner = DeadReckoner()
-    private var drSeqs: [Int] = []          // 이번 끊김에서 만든 추정점 seq (만든 순서)
+    private var drSeqs: [Int?] = []         // 이번 끊김에서 만든 추정점의 경로 기록 seq (경로 기록 중이 아니면 nil)
+    private var drTrack: String?            // 그 seq 가 속한 경로 기록
     private var motionFrame: CMAttitudeReferenceFrame?
     private var transposeR: Bool?           // 회전 행렬 방향(기기마다 확인)
 
@@ -57,25 +60,38 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
         super.init()
         authorization = manager.authorizationStatus
         manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+        applyAccuracy()
         // 거리 필터를 두면 멈춰 있을 때 위치가 아예 안 와서 'GPS 끊김'으로 오인함 → 1초마다 받고 저장할 때 거름
         manager.distanceFilter = kCLDistanceFilterNone
         manager.headingFilter = 2
         manager.pausesLocationUpdatesAutomatically = false
+        applyActivityType()
         if let a = store.active {
             // 앱이 꺼졌다 다시 켜짐 → 이어서 기록
-            mode = a.mode
-            manager.activityType = a.mode.activityType
             lastAccepted = a.points.last
-            beginRecording()
-        } else {
-            manager.activityType = mode.activityType
+            isRecording = true
+            startEngine()
         }
+        // 앱이 꺼진 사이 끝났는데 이동 수단을 못 정한 기록
+        for t in store.tracks where t.guessing == true && t.endedAt != nil { guessMode(t.clientId) }
         // 하루 종일 기록이 앱을 백그라운드로 다시 켰을 때는 화면용 위치를 켜지 않음
-        if UIApplication.shared.applicationState != .background || isRecording {
+        if UIApplication.shared.applicationState != .background || engineOn {
             startUpdates()
         } else {
             inForeground = false
+        }
+    }
+
+    private func applyAccuracy() {
+        manager.desiredAccuracy = reducedAccuracy ? kCLLocationAccuracyBest : kCLLocationAccuracyBestForNavigation
+    }
+
+    private func applyActivityType() {
+        if autoActive { manager.activityType = .automotiveNavigation; return }
+        switch activityHint {
+        case .car: manager.activityType = .automotiveNavigation
+        case .walk, .run, .bike: manager.activityType = .fitness
+        default: manager.activityType = .other
         }
     }
 
@@ -122,7 +138,7 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
     func requestPermission() {
         switch manager.authorizationStatus {
         case .notDetermined: manager.requestWhenInUseAuthorization()
-        case .authorizedWhenInUse: if isRecording { manager.requestAlwaysAuthorization() }
+        case .authorizedWhenInUse: if engineOn { manager.requestAlwaysAuthorization() }
         default: break
         }
     }
@@ -130,7 +146,7 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
     /// 앱이 앞/뒤로 갈 때
     func setForeground(_ on: Bool) {
         inForeground = on
-        if on { startUpdates() } else if !isRecording { stopUpdates() }
+        if on { startUpdates() } else if !engineOn { stopUpdates() }
         applyIdleTimer()
     }
 
@@ -150,65 +166,102 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
 
     func applyIdleTimer() {
-        // 웹판처럼 기록 중에는 화면 꺼짐 방지 (설정에서 끌 수 있음)
+        // 경로 기록 중에는 화면 꺼짐 방지 (설정에서 끌 수 있음). 자동 운전은 화면을 건드리지 않음
         let keep = UserDefaults.standard.object(forKey: "keepAwake") as? Bool ?? true
         UIApplication.shared.isIdleTimerDisabled = isRecording && inForeground && keep
     }
 
+    /// 경로 기록 시작 (이동 수단은 끝날 때 자동 인식)
     func start() {
         guard !isRecording else { return }
-        isAuto = false
-        store.start(mode: mode)
+        store.start(mode: .car)
         lastAccepted = nil
         jumpCandidate = nil
-        beginRecording()
+        isRecording = true
+        if autoActive {
+            // 자동 운전으로 엔진이 이미 켜져 있음 → 경로 기록만 붙임
+            applyIdleTimer()
+        } else {
+            startEngine()
+        }
         // 방금 받은 GPS가 있으면 첫 점으로 사용
-        if let l = lastGood, Date().timeIntervalSince(l.timestamp) < 3 { handle(l) }
+        if let l = lastGood, Date().timeIntervalSince(l.timestamp) < 3 { appendTrackPoint(l, afterDR: false) }
         Task { await store.sync() }
     }
 
-    /// 하루 종일 기록이 켜는 운전 기록 (차 + 충전 중). 이름 앞에 '운전' / '차량 이동'
-    func startAuto(prefix: String) {
-        guard !isRecording else { return }
-        mode = .car
-        store.start(mode: .car, prefix: prefix)
-        isAuto = true
-        lastAccepted = nil
-        jumpCandidate = nil
-        beginRecording()
-        if let l = lastGood, Date().timeIntervalSince(l.timestamp) < 3 { handle(l) }
-        Task { await store.sync() }
-    }
-
-    /// 끝낸 기록 이름 반환
+    /// 경로 기록 끝. 끝낸 기록 이름 반환
     @discardableResult
     func stop() -> String? {
         guard isRecording else { return nil }
-        isAuto = false
         let name = store.active?.name
-        manager.allowsBackgroundLocationUpdates = false
-        bgSession?.invalidate()
-        bgSession = nil
-        stopMotion()
+        if reckoner.isEstimating, drTrack == store.active?.clientId {
+            // 끊김 중에 끝냄 → 그 추정점은 보정 없이 경로 기록에 남김 (하루 기록 쪽 보정은 계속)
+            drSeqs = drSeqs.map { _ in nil }
+        }
         isRecording = false
-        onRecordingChanged?(false)
-        if !inForeground { stopUpdates() }
-        applyIdleTimer()
-        store.finish()
+        let cid = store.finish()
+        if !autoActive { stopEngine() } else { applyIdleTimer() }
+        if let cid { guessMode(cid) }
         Task { await store.sync() }
         return name
     }
 
-    private func beginRecording() {
-        isRecording = true
-        onRecordingChanged?(true)
+    /// 자동 운전 1초 기록 켬 (하루 기록이 부름). 경로 기록은 만들지 않음
+    func startAuto() {
+        guard !autoActive else { return }
+        autoActive = true
+        applyActivityType()
+        if !isRecording { startEngine() }
+    }
+
+    func stopAuto() {
+        guard autoActive else { return }
+        autoActive = false
+        applyActivityType()
+        if !isRecording { stopEngine() }
+    }
+
+    private func startEngine() {
+        onEngineChanged?(true)
         requestPermission()
         manager.allowsBackgroundLocationUpdates = true
         manager.showsBackgroundLocationIndicator = true
-        bgSession = CLBackgroundActivitySession()
+        if bgSession == nil { bgSession = CLBackgroundActivitySession() }
         startUpdates()
         startMotion()
         applyIdleTimer()
+    }
+
+    private func stopEngine() {
+        manager.allowsBackgroundLocationUpdates = false
+        bgSession?.invalidate()
+        bgSession = nil
+        stopMotion()
+        onEngineChanged?(false)
+        if !inForeground { stopUpdates() }
+        applyIdleTimer()
+    }
+
+    /// 끝난 경로 기록의 이동 수단: 기록 구간의 기기 동작 기록 → 없으면 평균 속도
+    private func guessMode(_ cid: String) {
+        guard let t = store.track(cid), let end = t.endedAt else { return }
+        let t0 = t.startedAt / 1000, t1 = end / 1000
+        let km = t.distanceM / 1000
+        Task {
+            var acts: [ModeGuess.Act] = []
+            if CMMotionActivityManager.isActivityAvailable(),
+               CMMotionActivityManager.authorizationStatus() == .authorized,
+               let list = try? await MotionHistory.shared.queryActs(Date(timeIntervalSince1970: t0 - 1800),
+                                                                       Date(timeIntervalSince1970: t1)) {
+                // 낮은 확신의 움직임·모름은 빼고, 기록 시작 전 마지막 하나는 포함
+                acts = list.filter { $0.kind != "unknown" && !($0.moving && $0.conf == 0) }
+                    .map { ModeGuess.Act(start: $0.start.timeIntervalSince1970, kind: $0.kind) }
+                if let i = acts.lastIndex(where: { $0.start <= t0 }) { acts.removeFirst(i) }
+            }
+            let m = ModeGuess.decide(acts: acts, t0: t0, t1: t1, km: km)
+            store.applyGuess(m, for: cid)
+            await store.sync()
+        }
     }
 
     // MARK: CLLocationManagerDelegate (메인 스레드에서 만든 manager → 메인 스레드로 옴)
@@ -235,8 +288,8 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
                 self.gpsError = "위치 권한이 꺼져 있습니다 (설정 › 개인정보 보호 › 위치 서비스 › Sillage)"
             case .authorizedWhenInUse, .authorizedAlways:
                 self.gpsError = nil
-                if self.inForeground || self.isRecording { self.startUpdates() }
-                if self.authorization == .authorizedWhenInUse && self.isRecording {
+                if self.inForeground || self.engineOn { self.startUpdates() }
+                if self.authorization == .authorizedWhenInUse && self.engineOn {
                     manager.requestAlwaysAuthorization()
                 }
             default: break
@@ -269,12 +322,9 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
         }
         weak = false
         lastGood = loc
-        guard isRecording else { return }
-        onFix?(loc)
+        guard engineOn else { return }
+        onFix?(loc)     // 하루 기록: 받은 점은 모두 넘김
 
-        let ts = loc.timestamp.timeIntervalSince1970 * 1000
-        var brk = false
-        var add = 0.0
         let wasDR = reckoner.isEstimating
         let corr = reckoner.gps(.init(t: loc.timestamp.timeIntervalSince1970,
                                       lat: loc.coordinate.latitude, lon: loc.coordinate.longitude,
@@ -283,6 +333,15 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
                                       spd: loc.speed >= 0 ? loc.speed : nil,
                                       hdg: loc.course >= 0 ? loc.course : nil))
         if wasDR { finishEstimate(corr) }
+        guard isRecording else { return }
+        appendTrackPoint(loc, afterDR: wasDR)
+    }
+
+    /// 경로 기록 파일에 점 추가 (수동 기록 중일 때만)
+    private func appendTrackPoint(_ loc: CLLocation, afterDR wasDR: Bool) {
+        let ts = loc.timestamp.timeIntervalSince1970 * 1000
+        var brk = false
+        var add = 0.0
         if wasDR, let last = lastAccepted {
             // 추정 끝점 → 복귀 위치: 순간 이동 검사 없이 이어 붙임(보정으로 맞춰짐)
             if (ts - last.ts) <= 0 { return }
@@ -353,7 +412,7 @@ extension Recorder {
     }
 
     private func onMotion(_ dm: CMDeviceMotion) {
-        guard isRecording else { return }
+        guard engineOn else { return }
         let g = dm.gravity, w = dm.rotationRate, a = dm.userAcceleration
         let gn = max(1e-6, (g.x * g.x + g.y * g.y + g.z * g.z).squareRoot())
         // 수직축 회전(위에서 볼 때 시계 방향 +): ω·ĝ (ĝ = 아래 방향)
@@ -386,28 +445,37 @@ extension Recorder {
     }
 
     private func appendEstimate(_ q: DeadReckoner.Point) {
-        guard let seq = store.active?.nextSeq else { return }
-        let p = TrackPoint(seq: seq, ts: q.t * 1000, lat: q.lat, lon: q.lon, alt: q.alt, acc: q.acc,
+        var seq: Int?
+        if isRecording, let a = store.active {
+            if drSeqs.isEmpty { drTrack = a.clientId }
+            if drTrack == a.clientId { seq = a.nextSeq }
+        }
+        let p = TrackPoint(seq: seq ?? -1, ts: q.t * 1000, lat: q.lat, lon: q.lon, alt: q.alt, acc: q.acc,
                            spd: q.spd, hdg: q.hdg, src: "imu", brk: nil)
-        let add = lastAccepted.map { p.location.distance(from: $0.location) } ?? 0
-        store.append(p, distanceAdd: add)
-        lastAccepted = p
+        if seq != nil {
+            let add = lastAccepted.map { p.location.distance(from: $0.location) } ?? 0
+            store.append(p, distanceAdd: add)
+            lastAccepted = p
+        }
         drSeqs.append(seq)
         onEstimate?(p)
     }
 
-    /// GPS 복귀: 추정점을 보정된 좌표로 바꿔 다시 올림
+    /// GPS 복귀: 추정점을 보정된 좌표로 바꿔 다시 올림 (경로 기록·하루 기록 둘 다)
     fileprivate func finishEstimate(_ c: DeadReckoner.Correction?) {
         estimating = false
-        defer { drSeqs = [] }
+        defer { drSeqs = []; drTrack = nil }
         guard let c, !drSeqs.isEmpty else { return }
         let fixed = zip(drSeqs, c.points).map { seq, q in
-            TrackPoint(seq: seq, ts: q.t * 1000, lat: q.lat, lon: q.lon, alt: q.alt, acc: q.acc,
+            TrackPoint(seq: seq ?? -1, ts: q.t * 1000, lat: q.lat, lon: q.lon, alt: q.alt, acc: q.acc,
                        spd: q.spd, hdg: q.hdg, src: "imu", brk: nil)
         }
-        store.correct(fixed)
+        let inTrack = fixed.filter { $0.seq >= 0 }
+        if isRecording, !inTrack.isEmpty, drTrack == store.active?.clientId {
+            store.correct(inTrack)
+            if let l = inTrack.last { lastAccepted = l }
+        }
         fixed.forEach { onEstimate?($0) }
-        if let l = fixed.last { lastAccepted = l }
         lastCorrection = c
     }
 }

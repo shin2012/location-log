@@ -324,7 +324,7 @@ final class DayPolicy {
             if dt <= 0 { return [] }
             let d = DayGeo.dist(la, lo, f.lat, f.lon)
             if d / dt > Options.maxSpeed && dt < 120 { return [] }
-            if d < max(5, movingConfig.distance * 0.5) && f.src != "visit" { return [] }
+            // 거리로 솎지 않음: 받은 점은 모두 저장. 덜 받는 건 iOS 정확도·거리 설정(movingConfig)이 맡음 — 받은 뒤 버리면 배터리 이득 없음
         }
         s.lastLat = f.lat; s.lastLon = f.lon; s.lastT = f.t
         return [.point(DayPoint(ts: f.t * 1000, lat: f.lat, lon: f.lon, alt: f.alt, acc: f.acc, spd: f.spd,

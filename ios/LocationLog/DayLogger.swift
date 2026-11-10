@@ -22,8 +22,9 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published private(set) var gpsSecondsToday: Double = 0
     @Published private(set) var config: DayGPSConfig = .off
     @Published private(set) var charging = false
-    @Published private(set) var hot = false                 // 발열 '심각' 이상 → 충전 중 정밀·운전 1초 기록 멈춤
-    @Published private(set) var autoDriving = false         // 차 + 충전 중이라 1초 기록을 자동으로 켬
+    @Published private(set) var hot = false                 // iOS 발열 단계 serious 이상 → 정밀도만 한 단계 낮춤 (기록은 그대로)
+    @Published private(set) var autoDriving = false         // 차 + 충전 중이라 1초 기록을 자동으로 켬 (하루 기록에만 저장)
+    @Published private(set) var driveLock = false           // 이번 운전에서 CarPlay + 충전 확인 → 운전 끝까지 1초 정밀도 고정
 
     let store = DayLogStore()
     let settings = DaySettings.shared
@@ -36,15 +37,16 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
     private var motionOn = false
     private var regionCenter: CLLocationCoordinate2D?
     private var slcOn = false
-    private var manualRecording = false
+    private var recorderOn = false          // Recorder 1초 엔진이 켜져 있음(경로 기록 또는 자동 운전) → 그 점을 받아 씀
     private var gpsSince: Date?
     private var lastUploadTry = Date.distantPast
     private var booted = false
     private weak var recorder: Recorder?
-    private var autoStopAt: Date?
     private var autoTimer: Timer?
     private static let stateKey = "day.state"
-    private static let autoKey = "day.autoDriving"
+    private static let autoKey = "day.autoDriving"      // 1.2.x — 이어받기만
+    private static let gateKey = "day.driveGate"
+    private var gate = DriveGate()
     private static let regionId = "day.stay"
 
     private override init() {
@@ -63,12 +65,19 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
         guard !booted else { return }
         booted = true
         recorder.onFix = { [weak self] l in self?.ingestRecorderFix(l) }
-        recorder.onRecordingChanged = { [weak self] on in self?.setManualRecording(on) }
+        recorder.onEngineChanged = { [weak self] on in self?.setRecorderOn(on) }
         recorder.onEstimate = { [weak self] p in self?.ingestEstimate(p) }
         self.recorder = recorder
-        manualRecording = recorder.isRecording
-        // 앱이 꺼졌다 켜졌는데 자동 운전 기록이 이어지는 중이면 계속 자동으로 관리
-        autoDriving = recorder.isRecording && UserDefaults.standard.bool(forKey: Self.autoKey)
+        recorderOn = recorder.engineOn
+        // 앱이 꺼졌다 켜졌는데 자동 운전 중이었으면 이어서 (조건이 풀렸으면 evaluateDrive 가 정리)
+        if let d = UserDefaults.standard.data(forKey: Self.gateKey), let g = try? JSONDecoder().decode(DriveGate.self, from: d) {
+            gate = g
+        } else if UserDefaults.standard.bool(forKey: Self.autoKey) {
+            gate.driving = true
+        }
+        UserDefaults.standard.removeObject(forKey: Self.autoKey)
+        publishGate()
+        if gate.driving { recorder.startAuto() }
         CarPlayWatcher.shared.onChange = { [weak self] on in self?.carPlayChanged(on) }
         CarPlayWatcher.shared.start()
         settings.onChange = { [weak self] old in self?.prefsChanged(old) }
@@ -146,7 +155,7 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     private func prefsChanged(_ old: DayPrefs) {
         let p = settings.prefs
-        policy.opt = p.policyOptions(lowBattery: lowBattery, boost: charging && !hot)
+        policy.opt = p.policyOptions(lowBattery: lowBattery, boost: charging)
         evaluateDrive()
         if p.enabled && !running {
             store.prune(keepDays: p.keepDays)
@@ -172,15 +181,15 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
         lowBattery = low
         charging = ch
         hot = h
-        policy.opt = settings.prefs.policyOptions(lowBattery: low, boost: ch && !h)
+        policy.opt = settings.prefs.policyOptions(lowBattery: low, boost: ch)
+        recorder?.reducedAccuracy = h
         if doApply && running { lastApplied = nil; apply(); scheduleTick() }
         if doApply { evaluateDrive() }
     }
 
-    private func setManualRecording(_ on: Bool) {
-        manualRecording = on
-        if !on && autoDriving { setAuto(false); autoStopAt = nil; autoTimer?.invalidate(); autoTimer = nil }
-        if running { apply() }
+    private func setRecorderOn(_ on: Bool) {
+        recorderOn = on
+        if running { lastApplied = nil; apply(); scheduleTick() }
     }
 
     /// 앱이 앞/뒤로 갈 때
@@ -209,15 +218,18 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
         scheduleQuietTimer()
 
         var c: DayGPSConfig
-        if manualRecording {
-            c = .off                       // 수동 기록이 GPS를 쓰는 중 → 그 점을 받아 씀
+        if recorderOn {
+            c = .off                       // 1초 엔진이 GPS를 쓰는 중 → 그 점을 받아 씀
         } else if q {
             c = p.keepAlive ? .keepAlive : .off
         } else {
             c = policy.config
         }
+        // 발열 serious 이상: 이동 중 최고 정확도만 한 단계 낮춤 (자리 확인용 GPS는 그대로)
+        if hot && policy.phase == .moving && c.acc == .best { c.acc = .ten }
         phase = policy.phase
         activity = policy.activity
+        recorder?.activityHint = policy.activity
 
         // 앱이 꺼졌을 때 다시 깨우는 것들
         if p.regionWake {
@@ -283,7 +295,7 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     private func scheduleTick() {
         tickTimer?.invalidate(); tickTimer = nil
-        guard running, !manualRecording, let at = policy.nextTick(now: now()) else { return }
+        guard running, !recorderOn, let at = policy.nextTick(now: now()) else { return }
         let t = Timer(fire: Date(timeIntervalSince1970: at), interval: 0, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -343,49 +355,48 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
             let l = recorder?.lastGood ?? manager.location
             CarPlayEvents.shared.add(on, at: Date(), lat: l?.coordinate.latitude, lng: l?.coordinate.longitude)
         }
+        if on { gate.carPlayConnected() }
         evaluateDrive()
     }
 
-    /// 차로 이동 중(CarPlay 연결 또는 기기 동작 '자동차') + 충전 중 + 뜨겁지 않음 → 1초 기록(수동 기록과 같은 엔진, 터널은 센서 추정).
-    /// CarPlay 연결 = 내가 운전('운전'), 연결 없음 = 그냥 차량 이동('차량 이동').
-    /// 조건이 풀리면 바로 끄지 않고 기다림 (CarPlay 1분, 그 밖 3분) — 신호 대기·잠깐 끊김에 기록이 쪼개지지 않게.
+    /// 자동 운전 1초 기록 (경로 기록과 상관없음 — 점은 하루 기록에만). 규칙은 DriveGate.
     private func evaluateDrive() {
         guard let rec = recorder else { return }
         let p = settings.prefs
-        let carPlay = CarPlayWatcher.shared.connected
-        let inCar = carPlay || policy.activity == .car
-        let want = p.enabled && p.driveRecord && charging && !hot && inCar
-        if rec.isRecording && !autoDriving { return }        // 사용자가 직접 켠 기록은 건드리지 않음
-        if want {
-            autoStopAt = nil
-            autoTimer?.invalidate(); autoTimer = nil
-            if !rec.isRecording {
-                rec.startAuto(prefix: carPlay ? "운전" : "차량 이동")
-                setAuto(true)
-            }
-            return
+        let cp = CarPlayWatcher.shared
+        let before = gate
+        let a = gate.evaluate(.init(now: now(), enabled: p.enabled && p.driveRecord, carPlay: cp.connected,
+                                    carPlaySince: cp.since?.timeIntervalSince1970, charging: charging,
+                                    activity: policy.activity))
+        switch a {
+        case .start: rec.startAuto()
+        case .stop: rec.stopAuto()
+        case .none: break
         }
-        guard autoDriving, rec.isRecording else { if autoDriving { setAuto(false) }; return }
-        let grace: TimeInterval = (!carPlay && CarPlayWatcher.shared.since.map { Date().timeIntervalSince($0) < 600 } == true) ? 60 : 180
-        if autoStopAt == nil {
-            autoStopAt = Date().addingTimeInterval(grace)
-            let t = Timer(fire: autoStopAt!, interval: 0, repeats: false) { [weak self] _ in
-                MainActor.assumeIsolated { self?.evaluateDrive() }
-            }
-            t.tolerance = 5
-            RunLoop.main.add(t, forMode: .common)
-            autoTimer = t
-        } else if let at = autoStopAt, Date() >= at {
-            autoStopAt = nil
-            autoTimer?.invalidate(); autoTimer = nil
-            rec.stop()
-            setAuto(false)
+        if gate.driving && !rec.autoActive { rec.startAuto() }
+        if !gate.driving && rec.autoActive { rec.stopAuto() }
+        if gate.stopAt != before.stopAt { scheduleDriveTimer() }
+        if gate != before {
+            publishGate()
+            if let d = try? JSONEncoder().encode(gate) { UserDefaults.standard.set(d, forKey: Self.gateKey) }
         }
     }
 
-    private func setAuto(_ on: Bool) {
-        autoDriving = on
-        UserDefaults.standard.set(on, forKey: Self.autoKey)
+    private func publishGate() {
+        if autoDriving != gate.driving { autoDriving = gate.driving }
+        if driveLock != gate.lock { driveLock = gate.lock }
+    }
+
+    /// 유예가 끝나는 때 한 번 더 판단 (그 사이 위치가 안 와도)
+    private func scheduleDriveTimer() {
+        autoTimer?.invalidate(); autoTimer = nil
+        guard let at = gate.stopAt else { return }
+        let t = Timer(fire: Date(timeIntervalSince1970: at + 1), interval: 0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.evaluateDrive() }
+        }
+        t.tolerance = 5
+        RunLoop.main.add(t, forMode: .common)
+        autoTimer = t
     }
 
     /// 수동/자동 기록의 센서 추정점(터널) → 하루 기록에도 (같은 시각이면 서버에서 덮어씀)
@@ -393,7 +404,8 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
         guard running else { return }
         let p = settings.prefs
         if p.isQuiet(Date()) || p.isExcluded(lat: t.lat, lon: t.lon) { return }
-        store.append(DayPoint(ts: t.ts, lat: t.lat, lon: t.lon, alt: t.alt, acc: t.acc, spd: t.spd, src: "imu", act: "car"))
+        store.append(DayPoint(ts: t.ts, lat: t.lat, lon: t.lon, alt: t.alt, acc: t.acc, spd: t.spd, src: "imu",
+                              act: autoDriving ? "car" : policy.activity.rawValue))
     }
 
     private func persist() {
@@ -425,7 +437,7 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         MainActor.assumeIsolated {
-            guard self.running, !self.manualRecording else { return }
+            guard self.running, !self.recorderOn else { return }
             for l in locations {
                 guard l.horizontalAccuracy >= 0, l.timestamp.timeIntervalSinceNow > -120 else { continue }
                 self.lastFixAt = l.timestamp
@@ -529,16 +541,18 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
         case .notDetermined: return "권한 확인 중"
         default: break
         }
-        if manualRecording && autoDriving {
-            return (CarPlayWatcher.shared.connected ? "운전" : "차량 이동") + " — 1초 기록 중 (충전 중, 터널은 센서 추정)"
+        let heat = hot ? " · 발열 심각, 정밀도 낮춤" : ""
+        if autoDriving {
+            return (CarPlayWatcher.shared.connected ? "운전" : "차량 이동") + " — 1초 기록 중"
+                + (driveLock ? " (운전 끝까지 고정)" : " (충전 중)") + heat
         }
-        if manualRecording { return "경로 기록 중 — 그 위치를 함께 저장" }
+        if recorderOn { return "경로 기록 중 — 그 위치를 함께 저장" + heat }
         if quiet { return "쉬는 시간 — 저장 안 함" }
         switch phase {
         case .stationary: return "머무는 중 — GPS 꺼 둠" + (lowBattery ? " (배터리 절약)" : "")
         case .checking: return "자리 확인 중 (GPS 잠깐)"
         case .probing: return "움직임 감지 — 출발했는지 확인 중"
-        case .moving: return activity.label + " — GPS " + accLabel + (lowBattery ? " (배터리 절약)" : charging && !hot && settings.prefs.chargePrecise ? " (충전 중 정밀)" : "")
+        case .moving: return activity.label + " — GPS " + accLabel + (lowBattery ? " (배터리 절약)" : charging && settings.prefs.chargePrecise ? " (충전 중 정밀)" : "") + heat
         }
     }
 

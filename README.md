@@ -52,7 +52,7 @@
 ```bash
 docker compose -p location-log up -d --build   # location-api(FastAPI) 하나
 python3 tests/test_autocheckin.py              # 자동 체크인 확정 규칙
-python3 tests/test_timefix.py                  # 도착·떠남·운전 끝 시각 보정
+python3 tests/test_timefix.py                  # 도착·떠남 시각 보정
 ```
 
 NPM 호스트 75 `location.b-612.kr` → `location-api:8000` (인증서 `*.b-612.kr`, 로그인 보호 없음 — 모든 요청 Bearer `APP_TOKEN`, `/api/health` 만 예외).
@@ -69,8 +69,10 @@ SwiftUI 앱. 백그라운드에서도 GPS 기록. `https://location.b-612.kr/app
 - 시험: `swiftc -O ios/LocationLog/DayPolicy.swift tools/probetest/main.swift -o /tmp/pt && /tmp/pt`
 
 ## 충전 중 · 운전 · CarPlay (v0.7)
-- 충전 중(발열 '심각' 미만): 움직일 때 '정밀', 머무는 동안 GPS 확인 3분마다 (`chargePrecise`)
-- 차로 이동(CarPlay 연결 또는 동작 '자동차') + 충전 중: 경로 기록을 자동으로 켬(`Recorder.startAuto`, 이름 '운전 · …' = CarPlay 연결, '차량 이동 · …' = 연결 없음) → 1초 GPS + 터널 센서 추정. 그 점(trk)과 추정점(imu)이 하루 종일 기록에도 들어감. 조건이 풀리면 3분(CarPlay 해제 직후면 1분) 뒤 끔. 직접 켠 기록은 건드리지 않음 (`driveRecord`)
+- 충전 중: 움직일 때 '정밀', 머무는 동안 GPS 확인 3분마다 (`chargePrecise`)
+- 발열(iOS `thermalState`가 serious 이상): 기록은 끄지 않고 정밀도만 한 단계 낮춤 — 1초 엔진은 내비게이션용 최고 → 일반 최고, 하루 기록 이동 중 최고 → 10m. 상태 문구에 '발열 심각' 표시
+- 자동 운전 1초 기록 (1.3.0~): 차로 이동(CarPlay 연결 또는 동작 '자동차') + 충전 중이면 `Recorder.startAuto()` → 1초 GPS + 터널 센서 추정. **경로 기록(track)은 만들지 않고** 점(trk)·추정점(imu)은 하루 기록(`day_pt`)에만. 경로 기록 메뉴와 독립 — 자동 운전 중에 수동 기록을 켜고 꺼도 서로 영향 없음 (Recorder 엔진 = 수동 기록 ∪ 자동 운전)
+- 판단 = `DriveGate.swift`(순수 로직, 시험 `tools/drivegate`). 이번 운전에서 CarPlay 연결과 충전이 한 번이라도 확인되면 **운전 끝까지 1초 정밀도 고정** — 충전이 빠지거나 동작이 흔들려도 유지. 끝 = CarPlay 해제 신호 1분 뒤(그 사이 다시 연결되면 이어감). 해제 신호가 안 오면 '자동차' 아닌 동작 10분 뒤 끝(동작 '모름'은 안 셈), 그 뒤 새 연결·'자동차' 동작 전까지 다시 안 켬. CarPlay 없는 '차량 이동'은 조건이 풀리면 3분 뒤 끔 (`driveRecord`)
 - CarPlay: 1순위 단축어 자동화(CarPlay 연결 시/해제 시) → 앱 동작 `CarPlay 연결 기록하기`/`CarPlay 연결 해제 기록하기` (`CarPlayIntents.swift`, 한 번 받으면 오디오 경로 판정 끔), 2순위 소리 출력 경로의 carAudio (`CarPlay.swift`) → `POST /api/carplay` (쌓아 두고 재전송) → location-api 가 fsq_map `/api/carplay/event` 로 전달(`FSQ_CARPLAY_URL`, `CARPLAY_API_TOKEN` in .env, device='Sillage'). 단축어 대신 (`carplaySend`)
 
 ## 자동 체크인 (v0.9) — IFTTT·람다 대체
@@ -90,4 +92,9 @@ flowchart LR
 - `AUTOCHECKIN_WRITE=0`(기본)이면 기록만, `1`이면 확정된 진입을 fsq_map으로 넘겨 체크인 저장. fsq_map은 같은 장소 ±10분 체크인이 있으면 저장하지 않음.
 - 시각 보정 (`server/timefix.py`): 확정되면 `place_event.adj_at` 에 실제 시각 저장 — 진입 = 반경 안에서 처음 멈춘 때(위치 점 속도 < 1m/s, 진입 10분 전~5분 뒤), 이탈 = 그 직전 '멈춤 → 걷기·차' 시작(기기 동작 `day_act`, 2분 미만 멈춤은 무시, 최대 10분 앞). 못 찾으면 감지 시각. 스웜 전달·이벤트 API `at` 은 이 시각(`detected_at` = 원래 감지 시각). 진입은 위치 점이 올라올 때까지 최대 12분 기다렸다 전달.
 - 타임라인도 같은 기준: 머문 곳 끝 = 움직이기 시작한 때, 다음 이동 시작 = 그 시각.
-- 자동 운전 기록('운전 …'/'차량 이동 …')은 끝나고 10분 뒤 한 번, CarPlay 해제(없으면 동작 '차' 끝) 앞 마지막 주행(2m/s↑) 다음 멈춘 점에서 뒤를 잘라냄 (`track.trimmed_at`, 이후 앱이 보내는 끝 시각은 무시).
+- (1.2.x 의 자동 운전 기록 끝 자르기 `trim_drives`는 1.3.0 에서 삭제 — 자동 운전이 track 을 만들지 않음. 남아 있던 4건은 빠진 점을 day_pt 에 합친 뒤 삭제, 백업 ~/backups/location_auto_tracks_33-36.json)
+
+## 경로 기록 이동 수단 자동 인식 · 점 솎기 (1.3.0)
+- 경로 기록 화면에 이동 수단 선택 없음. 끝낼 때 `ModeGuess`: 기록 구간 기기 동작 기록(CMMotionActivity, 낮은 확신 제외)에서 가장 오래 이어진 차·도보·자전거(2분 미만 무시) → 없으면 평균 속도(20km/h↑ 차량, 8km/h↓ 도보, 그 사이 기타). 인식 중(`LocalTrack.guessing`)에는 서버 반영·목록 정리 미룸, 앱이 꺼지면 다음 실행 때 다시 인식
+- 목록에서 바꾸면 `mode_auto=0`(사용자 선택, 자동 인식이 덮어쓰지 않음). 자동 인식 값은 '도보 · 자동' 배지. 서버 `track.mode_auto` (NULL = 1.2 이전 기록)
+- 하루 기록 저장 단계의 거리 솎기 삭제: 받은 점은 모두 저장(시각 역행·순간이동만 거름). 덜 받는 건 iOS 정확도·`distanceFilter` 설정이 맡음 — 1초 기록 중 받은 점을 버리던 것(배터리 이득 없음)을 없앤 것

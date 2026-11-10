@@ -84,7 +84,8 @@ def track_row(r):
     return {"id": r["id"], "client_id": r["client_id"], "name": r["name"],
             "started_at": dt_to_ms(r["started_at"]), "ended_at": dt_to_ms(r["ended_at"]),
             "distance_m": round(r["distance_m"], 1), "n_points": r["n_points"], "n_est": r["n_est"],
-            "sent_daily_at": dt_to_ms(r["sent_daily_at"]), "mode": r.get("mode", "car")}
+            "sent_daily_at": dt_to_ms(r["sent_daily_at"]), "mode": r.get("mode", "car"),
+            "mode_auto": None if r.get("mode_auto") is None else bool(r["mode_auto"])}
 
 
 @app.get("/api/health")
@@ -168,6 +169,7 @@ class TrackPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     ended_at: float | None = None
     mode: str | None = None
+    mode_auto: bool | None = None   # true = 앱이 자동 인식, false = 사용자가 고름
 
 
 @app.patch("/api/tracks/{tid}")
@@ -181,6 +183,8 @@ def patch_track(tid: int, body: TrackPatch):
             if body.mode not in MODES:
                 raise HTTPException(400, f"mode must be one of {MODES}")
             cur.execute("UPDATE track SET mode=%s WHERE id=%s", (body.mode, tid))
+        if body.mode_auto is not None:
+            cur.execute("UPDATE track SET mode_auto=%s WHERE id=%s", (int(body.mode_auto), tid))
         cur.execute("SELECT * FROM track WHERE id=%s", (tid,))
         r = cur.fetchone()
         if not r:
@@ -690,52 +694,12 @@ def ac_process(now: datetime | None = None) -> dict:
     return done
 
 
-TRIM_AFTER = timedelta(minutes=10)    # 끝난 뒤 이만큼 지나 (남은 점이 다 올라온 뒤) 자름
-
-
-def trim_drives(now: datetime | None = None) -> list:
-    """자동 운전 기록('운전 …'/'차량 이동 …')의 끝을 차가 멈춘 시각에서 자름. 최근 2일, 한 번만."""
-    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
-    done = []
-    with db() as cur:
-        cur.execute("SELECT id, name, started_at, ended_at FROM track WHERE trimmed_at IS NULL AND ended_at IS NOT NULL "
-                    "AND ended_at < %s AND ended_at > %s AND (name LIKE '운전 %%' OR name LIKE '차량 이동 %%')",
-                    (now - TRIM_AFTER, now - timedelta(days=2)))
-        for t in cur.fetchall():
-            t0, t1 = t["started_at"], t["ended_at"]
-            cp = None
-            if t["name"].startswith("운전"):
-                cur.execute("SELECT MAX(event_time) - INTERVAL 9 HOUR AS m FROM swarm.FSQ_CarPlay WHERE event_type='car_end' "
-                            "AND event_time BETWEEN %s + INTERVAL 9 HOUR AND %s + INTERVAL 9 HOUR", (t0, t1))
-                cp = (cur.fetchone() or {}).get("m")
-            cur.execute("(SELECT ts, act FROM day_act WHERE ts < %s ORDER BY ts DESC LIMIT 1) UNION ALL "
-                        "(SELECT ts, act FROM day_act WHERE ts >= %s AND ts <= %s) ORDER BY ts", (t0, t0, t1))
-            anchor = timefix.drive_anchor(cp, cur.fetchall(), t0, t1)
-            cut = None
-            if anchor:
-                cur.execute("SELECT ts, spd FROM track_pt WHERE track_id=%s ORDER BY seq", (t["id"],))
-                cut = timefix.drive_cut(cur.fetchall(), anchor)
-            n = 0
-            if cut:
-                n = cur.execute("DELETE FROM track_pt WHERE track_id=%s AND ts > %s", (t["id"], cut))
-                cur.execute("UPDATE track SET ended_at=%s WHERE id=%s", (cut, t["id"]))
-                refresh_stats(cur, t["id"])
-            cur.execute("UPDATE track SET trimmed_at=%s WHERE id=%s", (now, t["id"]))
-            done.append((t["id"], cut, n))
-            print(f"[trim] track {t['id']} cut={cut} drop={n}", flush=True)
-    return done
-
-
 def _ac_loop():
     while True:
         try:
             ac_process()
         except Exception as e:
             print(f"[autocheckin] {e}", flush=True)
-        try:
-            trim_drives()
-        except Exception as e:
-            print(f"[trim] {e}", flush=True)
         time.sleep(60)
 
 

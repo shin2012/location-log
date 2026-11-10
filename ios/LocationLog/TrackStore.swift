@@ -19,7 +19,9 @@ final class TrackStore: ObservableObject {
         fileURL = dir.appendingPathComponent("tracks.json")
         if let d = try? Data(contentsOf: fileURL),
            let t = try? JSONDecoder().decode([LocalTrack].self, from: d) {
-            tracks = t
+            // 1.3.0: 자동 운전은 경로 기록을 만들지 않음 → 예전 버전이 만든 자동 운전 기록('운전 · '/'차량 이동 · ') 정리
+            tracks = t.filter { !(($0.name.hasPrefix("운전 · ") || $0.name.hasPrefix("차량 이동 · ")) && $0.renamed != true) }
+            if tracks.count != t.count { save(force: true) }
         }
     }
 
@@ -30,11 +32,11 @@ final class TrackStore: ObservableObject {
 
     // MARK: 기록
 
-    func start(mode: TravelMode, prefix: String? = nil) {
+    func start(mode: TravelMode) {
         if activeIndex != nil { return }
         let now = Date()
         let t = LocalTrack(clientId: UUID().uuidString.lowercased(),
-                           name: prefix.map { "\($0) · " + Fmt.recName(now) } ?? Fmt.recName(now),
+                           name: Fmt.recName(now),
                            startedAt: now.timeIntervalSince1970 * 1000,
                            endedAt: nil, mode: mode, serverId: nil, points: [],
                            uploadedSeq: -1, needsPatch: mode != .car, distanceM: 0, renamed: nil)
@@ -61,17 +63,23 @@ final class TrackStore: ObservableObject {
         save(force: true)
     }
 
-    func setMode(_ m: TravelMode) {
-        guard let i = activeIndex, tracks[i].mode != m else { return }
+    /// 사용자가 목록에서 이동 수단을 고름 (진행 중 포함) → 자동 인식이 덮어쓰지 않음
+    func setMode(_ m: TravelMode, for cid: String) {
+        guard let i = index(cid) else { return }
         tracks[i].mode = m
+        tracks[i].modeAuto = false
         tracks[i].needsPatch = true
         save(force: true)
     }
 
-    /// 끝난 기록의 이동 수단 바꾸기 (진행 중이면 setMode와 같음)
-    func setMode(_ m: TravelMode, for cid: String) {
-        guard let i = index(cid), tracks[i].mode != m else { return }
-        tracks[i].mode = m
+    /// 기록이 끝난 뒤 자동 인식한 이동 수단 (사용자가 이미 골랐으면 그대로)
+    func applyGuess(_ m: TravelMode, for cid: String) {
+        guard let i = index(cid) else { return }
+        if tracks[i].modeAuto != false {
+            tracks[i].mode = m
+            tracks[i].modeAuto = true
+        }
+        tracks[i].guessing = nil
         tracks[i].needsPatch = true
         save(force: true)
     }
@@ -93,9 +101,11 @@ final class TrackStore: ObservableObject {
 
     func track(_ cid: String) -> LocalTrack? { tracks.first { $0.clientId == cid } }
 
-    /// 기록 끝. 점이 2개 미만이면 버림
-    func finish() {
-        guard let i = activeIndex else { return }
+    /// 기록 끝. 점이 2개 미만이면 버림. 남긴 기록의 clientId (이동 수단 인식 대상)
+    @discardableResult
+    func finish() -> String? {
+        guard let i = activeIndex else { return nil }
+        var kept: String?
         if tracks[i].points.count < 2 {
             let sid = tracks[i].serverId
             tracks.remove(at: i)
@@ -103,8 +113,11 @@ final class TrackStore: ObservableObject {
         } else {
             tracks[i].endedAt = (tracks[i].points.last?.ts) ?? Date().timeIntervalSince1970 * 1000
             tracks[i].needsPatch = true
+            tracks[i].guessing = true
+            kept = tracks[i].clientId
         }
         save(force: true)
+        return kept
     }
 
     func save(force: Bool = false) {
@@ -160,11 +173,11 @@ final class TrackStore: ObservableObject {
             }
         }
         // 끝난 시각·이동 수단
-        guard let i = index(cid), let sid = tracks[i].serverId else { return }
+        guard let i = index(cid), let sid = tracks[i].serverId, tracks[i].guessing != true else { return }
         if tracks[i].needsPatch {
             let t = tracks[i]
             _ = try await API.patch(sid, PatchBody(name: t.renamed == true ? t.name : nil,
-                                                   endedAt: t.endedAt, mode: t.mode.rawValue))
+                                                   endedAt: t.endedAt, mode: t.mode.rawValue, modeAuto: t.modeAuto))
             if let j = index(cid), tracks[j].mode == t.mode, tracks[j].endedAt == t.endedAt, tracks[j].name == t.name {
                 tracks[j].needsPatch = false
             }

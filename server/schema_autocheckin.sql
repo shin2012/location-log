@@ -23,4 +23,5 @@ CREATE TABLE IF NOT EXISTS place_event (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='자동 체크인 진입·이탈';
 
 -- 자동 운전 기록 끝 자름 (server/timefix.py drive_cut)
-ALTER TABLE track ADD COLUMN IF NOT EXISTS trimmed_at DATETIME NULL COMMENT '자동 운전 기록 끝 자름 처리한 때';
+ALTER TABLE track ADD COLUMN IF NOT EXISTS trimmed_at DATETIME NULL COMMENT '(1.2.x) 자동 운전 기록 끝 자름 처리한 때 — 1.3.0 부터 안 씀';
+ALTER TABLE track ADD COLUMN IF NOT EXISTS mode_auto TINYINT(1) NULL COMMENT '1 = 앱이 이동 수단 자동 인식, 0 = 사용자가 고름';

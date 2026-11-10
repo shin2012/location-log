@@ -88,7 +88,7 @@ final class MotionHistory: ObservableObject {
         if let last { ud.set(last, forKey: Self.actLastKey) }
     }
 
-    private nonisolated func queryActs(_ from: Date, _ to: Date) async throws -> [Act] {
+    nonisolated func queryActs(_ from: Date, _ to: Date) async throws -> [Act] {
         let mgr = CMMotionActivityManager()
         return try await withCheckedThrowingContinuation { cont in
             mgr.queryActivityStarting(from: from, to: to, to: OperationQueue()) { acts, err in

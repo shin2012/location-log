@@ -20,6 +20,7 @@ struct PatchBody: Encodable {
     var name: String?
     var endedAt: Double?
     var mode: String?
+    var modeAuto: Bool?
 }
 
 /// location.b-612.kr/app-api — 시야쥬 전용 FastAPI. Bearer 토큰.

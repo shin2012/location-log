@@ -222,7 +222,7 @@ struct BatterySettingsView: View {
         var parts: [String] = []
         if logger.charging { parts.append("충전 중") }
         if logger.lowBattery { parts.append("배터리 부족") }
-        if logger.hot { parts.append("폰이 뜨거움") }
+        if logger.hot { parts.append("발열 심각 — 정밀도 한 단계 낮춤") }
         return parts.isEmpty ? "보통" : parts.joined(separator: " · ")
     }
 }
@@ -239,9 +239,11 @@ struct DriveSettingsView: View {
         Form {
             Section {
                 Toggle("차로 이동 + 충전 중이면 1초 기록", isOn: p.driveRecord)
-                if logger.autoDriving { LabeledContent("지금", value: "자동 1초 기록 중") }
+                if logger.autoDriving {
+                    LabeledContent("지금", value: logger.driveLock ? "1초 기록 중 · 운전 끝까지 고정" : "1초 기록 중")
+                }
             } footer: {
-                Text("차로 이동(CarPlay 연결 또는 차량 움직임)하며 충전 중이면 경로 기록을 자동으로 켜 1초마다 저장하고, 터널처럼 GPS가 끊기면 센서로 이어 그립니다. 내려서 3분(CarPlay 해제 뒤 1분) 지나면 끕니다. 폰이 뜨거우면 멈춥니다.")
+                Text("차로 이동(CarPlay 연결 또는 차량 움직임)하며 충전 중이면 1초마다 위치를 받아 하루 기록(타임라인)에 저장하고, 터널처럼 GPS가 끊기면 센서로 이어 그립니다. 경로 기록 메뉴에는 저장하지 않습니다. CarPlay 연결과 충전이 한 번이라도 확인되면 충전이 끊겨도 CarPlay 해제 1분 뒤까지 1초 기록을 유지합니다. CarPlay 없이 차로 움직이면 내려서 3분 뒤 끕니다. 폰이 뜨거우면(iOS 발열 단계 심각 이상) 정밀도만 한 단계 낮춥니다.")
             }
             Section {
                 Toggle("CarPlay 연결 기록 보내기", isOn: p.carplaySend)

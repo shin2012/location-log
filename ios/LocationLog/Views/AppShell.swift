@@ -81,7 +81,6 @@ struct RootView: View {
 struct RecordingBanner: View {
     @EnvironmentObject var recorder: Recorder
     @EnvironmentObject var store: TrackStore
-    @ObservedObject private var logger = DayLogger.shared
     let onTap: () -> Void
 
     var body: some View {
@@ -89,7 +88,7 @@ struct RecordingBanner: View {
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 HStack(spacing: 8) {
                     Image(systemName: "record.circle.fill").foregroundStyle(.red).symbolEffect(.pulse)
-                    Text(logger.autoDriving ? (CarPlayWatcher.shared.connected ? "운전 기록 중" : "차량 이동 기록 중") : "경로 기록 중")
+                    Text("경로 기록 중")
                         .fontWeight(.semibold)
                     Text(Fmt.clock(recorder.elapsed)).monospacedDigit()
                     if let d = store.active?.distanceM, d > 0 {

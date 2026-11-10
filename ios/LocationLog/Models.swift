@@ -74,6 +74,8 @@ struct LocalTrack: Codable, Identifiable {
     var distanceM: Double
     var renamed: Bool?      // 이 기기에서 이름을 바꿈 → 마무리할 때 서버에도 이름 반영
     var resendFrom: Int? = nil  // 보정된 추정점: 이 seq부터 서버에 다시 올림
+    var modeAuto: Bool? = nil   // true = 이동 수단 자동 인식, false = 사용자가 직접 고름
+    var guessing: Bool? = nil   // 끝났는데 이동 수단 인식 중 → 그동안 서버 반영·목록 정리 미룸
 
     var id: String { clientId }
     var nextSeq: Int { (points.last?.seq ?? -1) + 1 }
@@ -92,6 +94,7 @@ struct ServerTrack: Codable, Identifiable, Hashable {
     let nEst: Int?
     var sentDailyAt: Double?
     var mode: String?
+    var modeAuto: Bool?
 }
 
 /// 서버 기록 + 점 (GET /api/tracks/{id})
@@ -106,11 +109,12 @@ struct ServerTrackDetail: Codable {
     let nEst: Int?
     var sentDailyAt: Double?
     var mode: String?
+    var modeAuto: Bool?
     let points: [TrackPoint]
 
     var track: ServerTrack {
         ServerTrack(id: id, clientId: clientId, name: name, startedAt: startedAt, endedAt: endedAt,
-                    distanceM: distanceM, nPoints: nPoints, nEst: nEst, sentDailyAt: sentDailyAt, mode: mode)
+                    distanceM: distanceM, nPoints: nPoints, nEst: nEst, sentDailyAt: sentDailyAt, mode: mode, modeAuto: modeAuto)
     }
 }
 
