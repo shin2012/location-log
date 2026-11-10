@@ -52,6 +52,7 @@
 ```bash
 docker compose -p location-log up -d --build   # location-api(FastAPI) 하나
 python3 tests/test_autocheckin.py              # 자동 체크인 확정 규칙
+python3 tests/test_timefix.py                  # 도착·떠남·운전 끝 시각 보정
 ```
 
 NPM 호스트 75 `location.b-612.kr` → `location-api:8000` (인증서 `*.b-612.kr`, 로그인 보호 없음 — 모든 요청 Bearer `APP_TOKEN`, `/api/health` 만 예외).
@@ -82,3 +83,6 @@ flowchart LR
 - 이벤트: `place_event` (UTC). 상태 `pending → confirmed / ignored(이유) / sent / failed`. 확정 규칙은 `server/autocheckin.py`, 시험 `python3 tests/test_autocheckin.py`.
 - 이탈(퇴근)도 확정해 저장 — 데일리요섭 체류 끝 시각에 쓸 예정.
 - `AUTOCHECKIN_WRITE=0`(기본)이면 기록만, `1`이면 확정된 진입을 fsq_map으로 넘겨 체크인 저장. fsq_map은 같은 장소 ±10분 체크인이 있으면 저장하지 않음.
+- 시각 보정 (`server/timefix.py`): 확정되면 `place_event.adj_at` 에 실제 시각 저장 — 진입 = 반경 안에서 처음 멈춘 때(위치 점 속도 < 1m/s, 진입 10분 전~5분 뒤), 이탈 = 그 직전 '멈춤 → 걷기·차' 시작(기기 동작 `day_act`, 2분 미만 멈춤은 무시, 최대 10분 앞). 못 찾으면 감지 시각. 스웜 전달·이벤트 API `at` 은 이 시각(`detected_at` = 원래 감지 시각). 진입은 위치 점이 올라올 때까지 최대 12분 기다렸다 전달.
+- 타임라인도 같은 기준: 머문 곳 끝 = 움직이기 시작한 때, 다음 이동 시작 = 그 시각.
+- 자동 운전 기록('운전 …'/'차량 이동 …')은 끝나고 10분 뒤 한 번, CarPlay 해제(없으면 동작 '차' 끝) 앞 마지막 주행(2m/s↑) 다음 멈춘 점에서 뒤를 잘라냄 (`track.trimmed_at`, 이후 앱이 보내는 끝 시각은 무시).
