@@ -2,7 +2,7 @@ import SwiftUI
 import MapKit
 import CoreLocation
 
-/// 자동 체크인: 켜기 · 최근 들어옴/나감 결과(서버 판정) · 장소 목록과 반경
+/// 자동 체크인: 켜기 · 장소 목록과 반경 (들어옴/나감 내역은 오른쪽 위 목록 버튼)
 struct AutoCheckinScreen: View {
     @EnvironmentObject var settings: AppSettings
     @EnvironmentObject var toaster: Toaster
@@ -27,18 +27,7 @@ struct AutoCheckinScreen: View {
                     }
                     if let e = auto.lastError { Text(e).font(.footnote).foregroundStyle(.orange) }
                 } footer: {
-                    Text("등록한 장소 반경에 들어가면 체크인, 나가면 '나감'으로 기록합니다. 3분 넘게 머물러야 체크인이 되고, 나갔다가 15분 안에 다시 들어오면 나간 것으로 치지 않습니다. 시각은 들어간·나간 순간입니다. '기록만'이면 서버에 남기기만 하고 체크인은 만들지 않습니다(서버 설정). 위치 권한 '항상 허용'이 필요합니다.")
-                }
-
-                Section("최근 7일") {
-                    if let evs = events?.events, !evs.isEmpty {
-                        ForEach(evs) { EventRow(ev: $0) }
-                    } else if loading {
-                        HStack { Spacer(); ProgressView(); Spacer() }
-                    } else {
-                        Text(settings.token.isEmpty ? "서버에 연결되어 있지 않습니다" : (error ?? "아직 기록이 없습니다"))
-                            .foregroundStyle(.secondary)
-                    }
+                    Text("등록한 장소 반경에 들어가면 체크인, 나가면 '나감'으로 기록합니다. 3분 넘게 머물러야 체크인이 되고, 나갔다가 15분 안에 다시 들어오면 나간 것으로 치지 않습니다. 시각은 반경 안에서 멈춘 때(들어옴)·움직이기 시작한 때(나감)입니다. '기록만'이면 서버에 남기기만 하고 체크인은 만들지 않습니다(서버 설정). 위치 권한 '항상 허용'이 필요합니다.")
                 }
 
                 Section {
@@ -64,15 +53,14 @@ struct AutoCheckinScreen: View {
                 } header: {
                     Text("장소 \(places.count)곳")
                 } footer: {
-                    Text("밀어서 끄거나 지울 수 있습니다.")
+                    Text(error ?? "밀어서 끄거나 지울 수 있습니다.")
                 }
             }
             .navigationTitle("자동 체크인")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { startAdd() } label: { Image(systemName: "plus") }
-                        .accessibilityLabel("장소 추가")
-                        .disabled(settings.token.isEmpty)
+                    NavigationLink { CheckinHistoryView() } label: { Image(systemName: "list.bullet") }
+                        .accessibilityLabel("자동 체크인 내역")
                 }
             }
             .sheet(isPresented: $adding) {
@@ -100,7 +88,7 @@ struct AutoCheckinScreen: View {
         loading = true
         defer { loading = false }
         do {
-            async let e = API.acEvents(days: 7)
+            async let e = API.acEvents(days: 1)    // 저장 방식(write)만 씀
             async let p = API.acPlaces()
             events = try await e
             places = try await p
@@ -133,6 +121,50 @@ struct AutoCheckinScreen: View {
             toaster.show(pl.wrappedValue.enabled == false ? "\(pl.wrappedValue.name) 감시를 껐습니다" : "\(pl.wrappedValue.name) 감시를 켰습니다")
         } catch {
             toaster.show("바꾸지 못했습니다: \(PlaceDetailView.friendly(error))")
+        }
+    }
+}
+
+/// 자동 체크인 내역: 최근 30일 들어옴/나감과 서버 판정
+struct CheckinHistoryView: View {
+    @EnvironmentObject var settings: AppSettings
+    @State private var events: [ACEvent] = []
+    @State private var loaded = false
+    @State private var loading = false
+    @State private var error: String?
+
+    var body: some View {
+        List {
+            Section {
+                if !events.isEmpty {
+                    ForEach(events) { EventRow(ev: $0) }
+                } else if loading || (!loaded && !settings.token.isEmpty) {
+                    HStack { Spacer(); ProgressView(); Spacer() }
+                } else {
+                    Text(settings.token.isEmpty ? "서버에 연결되어 있지 않습니다" : (error ?? "아직 기록이 없습니다"))
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("최근 30일")
+            } footer: {
+                Text("초록 = 체크인됨·확정, 회색 = 무시(지나감·재진입), 주황 = 판정 대기, 빨강 = 전달 실패.")
+            }
+        }
+        .navigationTitle("자동 체크인 내역")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        guard !settings.token.isEmpty else { return }
+        loading = true
+        defer { loading = false; loaded = true }
+        do {
+            events = try await API.acEvents(days: 30).events
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }
