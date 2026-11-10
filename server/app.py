@@ -175,8 +175,8 @@ def patch_track(tid: int, body: TrackPatch):
     with db() as cur:
         if body.name is not None:
             cur.execute("UPDATE track SET name=%s WHERE id=%s", (body.name.strip(), tid))
-        if body.ended_at is not None:
-            cur.execute("UPDATE track SET ended_at=%s WHERE id=%s", (ms_to_dt(body.ended_at), tid))
+        if body.ended_at is not None:   # 끝을 자른 자동 운전 기록은 늦게 온 끝 시각으로 다시 늘리지 않음
+            cur.execute("UPDATE track SET ended_at=%s WHERE id=%s AND trimmed_at IS NULL", (ms_to_dt(body.ended_at), tid))
         if body.mode is not None:
             if body.mode not in MODES:
                 raise HTTPException(400, f"mode must be one of {MODES}")
@@ -433,6 +433,7 @@ def carplay(body: CarPlayIn):
 import threading  # noqa: E402
 
 import autocheckin  # noqa: E402
+import timefix  # noqa: E402
 
 AC_WRITE = os.environ.get("AUTOCHECKIN_WRITE", "0") == "1"   # 0 = 기록만 (함께 돌려 보는 기간)
 
@@ -595,12 +596,13 @@ def ac_event(body: PlaceEventIn):
 @app.get("/api/autocheckin/events")
 def ac_events(days: int = 7):
     with db() as cur:
-        cur.execute("SELECT e.id, e.venue_id, p.name, e.kind, e.at, e.status, e.note, e.fsq_id, e.received_at "
+        cur.execute("SELECT e.id, e.venue_id, p.name, e.kind, COALESCE(e.adj_at, e.at) AS at, e.at AS detected_at, "
+                    "e.status, e.note, e.fsq_id, e.received_at "
                     "FROM place_event e LEFT JOIN auto_place p USING (venue_id) "
                     "WHERE e.at >= UTC_TIMESTAMP() - INTERVAL %s DAY ORDER BY e.at DESC", (min(days, 60),))
         rows = cur.fetchall()
     for r in rows:
-        r["at"], r["received_at"] = dt_to_ms(r["at"]), dt_to_ms(r["received_at"])
+        r["at"], r["detected_at"], r["received_at"] = dt_to_ms(r["at"]), dt_to_ms(r["detected_at"]), dt_to_ms(r["received_at"])
     return {"write": AC_WRITE, "events": rows}
 
 
@@ -623,13 +625,46 @@ def _ac_forward(venue_id: str, at: datetime) -> str:
     return out.get("fsq_id") or ("중복:" + str(out.get("existing") or ""))
 
 
+AC_ADJ_WAIT = timedelta(minutes=12)   # 도착 보정에 필요한 위치 점이 아직 안 올라왔으면 이만큼까지 기다림
+
+
+def _ac_adjust(cur, vid: str, now: datetime) -> None:
+    """확정된 진입·이탈의 실제 시각(adj_at): 진입 = 반경 안에서 멈춘 때, 이탈 = 움직이기 시작한 때. 못 찾으면 감지 시각."""
+    cur.execute("SELECT id, kind, at FROM place_event WHERE venue_id=%s AND status IN ('confirmed','failed') "
+                "AND adj_at IS NULL AND at > %s", (vid, now - timedelta(days=1)))
+    todo = cur.fetchall()
+    if not todo:
+        return
+    cur.execute("SELECT lat, lon, radius FROM auto_place WHERE venue_id=%s", (vid,))
+    pl = cur.fetchone()
+    for e in todo:
+        at, adj = e["at"], None
+        if e["kind"] == "enter":
+            if pl:
+                cur.execute("SELECT MAX(ts) AS m FROM day_pt")
+                last = (cur.fetchone() or {}).get("m")
+                if (not last or last < at + timefix.ARRIVE_FWD) and now - at < AC_ADJ_WAIT:
+                    continue          # 진입 뒤 위치 점이 아직 덜 올라옴 → 다음 차례에
+                cur.execute("SELECT ts, lat, lon, spd FROM day_pt WHERE ts BETWEEN %s AND %s AND src IN ('gps','trk') ORDER BY ts",
+                            (at - timefix.ARRIVE_BACK, at + timefix.ARRIVE_FWD))
+                adj = timefix.stop_time(cur.fetchall(), at, (pl["lat"], pl["lon"]), pl["radius"])
+        else:
+            cur.execute("SELECT MAX(at) AS m FROM place_event WHERE venue_id=%s AND kind='enter' AND at < %s "
+                        "AND status IN ('confirmed','sent','failed')", (vid, at))
+            prev = (cur.fetchone() or {}).get("m")
+            cur.execute("SELECT ts, act FROM day_act WHERE ts BETWEEN %s AND %s ORDER BY ts", (at - timedelta(hours=1), at))
+            adj = timefix.move_start(cur.fetchall(), at, not_before=prev)
+        cur.execute("UPDATE place_event SET adj_at=%s WHERE id=%s", (adj or at, e["id"]))
+
+
 def ac_process(now: datetime | None = None) -> dict:
     """대기 중인 진입·이탈 확정 → (쓰기 켜짐이면) 진입을 체크인으로 전달. 1분마다 + 이벤트 받을 때."""
     now = now or datetime.now(timezone.utc).replace(tzinfo=None)
     done = {"confirmed": 0, "ignored": 0, "sent": 0, "failed": 0}
     with _ac_lock, db() as cur:
         cur.execute("SELECT DISTINCT venue_id FROM place_event WHERE status='pending' "
-                    "OR (status='failed' AND kind='enter' AND at > %s)", (now - timedelta(days=1),))
+                    "OR (status='failed' AND kind='enter' AND at > %s) "
+                    "OR (status='confirmed' AND adj_at IS NULL AND at > %s)", (now - timedelta(days=1), now - timedelta(days=1)))
         for (vid,) in [(r["venue_id"],) for r in cur.fetchall()]:
             cur.execute("SELECT id, kind, at, status, received_at AS recv FROM place_event WHERE venue_id=%s AND at > %s ORDER BY at, id",
                         (vid, now - timedelta(days=2)))
@@ -638,18 +673,55 @@ def ac_process(now: datetime | None = None) -> dict:
                 cur.execute("UPDATE place_event SET status=%s, note=%s, resolved_at=%s WHERE id=%s",
                             (st, note, now, eid))
                 done[st] += 1
+            _ac_adjust(cur, vid, now)
             if not AC_WRITE:
                 continue
-            cur.execute("SELECT id, at FROM place_event WHERE venue_id=%s AND kind='enter' AND fsq_id IS NULL "
-                        "AND (status='confirmed' OR status='failed') AND at > %s", (vid, now - timedelta(days=1)))
+            cur.execute("SELECT id, adj_at FROM place_event WHERE venue_id=%s AND kind='enter' AND fsq_id IS NULL "
+                        "AND adj_at IS NOT NULL AND (status='confirmed' OR status='failed') AND at > %s", (vid, now - timedelta(days=1)))
             for r in cur.fetchall():
                 try:
-                    fid = _ac_forward(vid, r["at"])
+                    fid = _ac_forward(vid, r["adj_at"])
                     cur.execute("UPDATE place_event SET status='sent', fsq_id=%s, note=NULL WHERE id=%s", (fid[:40], r["id"]))
                     done["sent"] += 1
                 except Exception as e:
                     cur.execute("UPDATE place_event SET status='failed', note=%s WHERE id=%s", (str(e)[:250], r["id"]))
                     done["failed"] += 1
+    return done
+
+
+TRIM_AFTER = timedelta(minutes=10)    # 끝난 뒤 이만큼 지나 (남은 점이 다 올라온 뒤) 자름
+
+
+def trim_drives(now: datetime | None = None) -> list:
+    """자동 운전 기록('운전 …'/'차량 이동 …')의 끝을 차가 멈춘 시각에서 자름. 최근 2일, 한 번만."""
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    done = []
+    with db() as cur:
+        cur.execute("SELECT id, name, started_at, ended_at FROM track WHERE trimmed_at IS NULL AND ended_at IS NOT NULL "
+                    "AND ended_at < %s AND ended_at > %s AND (name LIKE '운전 %%' OR name LIKE '차량 이동 %%')",
+                    (now - TRIM_AFTER, now - timedelta(days=2)))
+        for t in cur.fetchall():
+            t0, t1 = t["started_at"], t["ended_at"]
+            cp = None
+            if t["name"].startswith("운전"):
+                cur.execute("SELECT MAX(event_time) - INTERVAL 9 HOUR AS m FROM swarm.FSQ_CarPlay WHERE event_type='car_end' "
+                            "AND event_time BETWEEN %s + INTERVAL 9 HOUR AND %s + INTERVAL 9 HOUR", (t0, t1))
+                cp = (cur.fetchone() or {}).get("m")
+            cur.execute("(SELECT ts, act FROM day_act WHERE ts < %s ORDER BY ts DESC LIMIT 1) UNION ALL "
+                        "(SELECT ts, act FROM day_act WHERE ts >= %s AND ts <= %s) ORDER BY ts", (t0, t0, t1))
+            anchor = timefix.drive_anchor(cp, cur.fetchall(), t0, t1)
+            cut = None
+            if anchor:
+                cur.execute("SELECT ts, spd FROM track_pt WHERE track_id=%s ORDER BY seq", (t["id"],))
+                cut = timefix.drive_cut(cur.fetchall(), anchor)
+            n = 0
+            if cut:
+                n = cur.execute("DELETE FROM track_pt WHERE track_id=%s AND ts > %s", (t["id"], cut))
+                cur.execute("UPDATE track SET ended_at=%s WHERE id=%s", (cut, t["id"]))
+                refresh_stats(cur, t["id"])
+            cur.execute("UPDATE track SET trimmed_at=%s WHERE id=%s", (now, t["id"]))
+            done.append((t["id"], cut, n))
+            print(f"[trim] track {t['id']} cut={cut} drop={n}", flush=True)
     return done
 
 
@@ -659,6 +731,10 @@ def _ac_loop():
             ac_process()
         except Exception as e:
             print(f"[autocheckin] {e}", flush=True)
+        try:
+            trim_drives()
+        except Exception as e:
+            print(f"[trim] {e}", flush=True)
         time.sleep(60)
 
 

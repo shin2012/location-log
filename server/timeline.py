@@ -6,6 +6,8 @@ DB 를 읽는 부분(build)과 계산(순수 함수)을 나눠 시험하기 쉽�
 import math
 from datetime import datetime, timedelta
 
+import timefix
+
 MERGE_KM = 0.1      # 같은 곳 (300m 였을 때 회사 옆 230m 식당 점심이 회사로 합쳐짐)
 INSIDE_KM = 0.2     # 머문 곳 안 점으로 볼 거리 (건물 안 GPS 흔들림)
 MERGE_GAP = timedelta(minutes=10)
@@ -112,6 +114,12 @@ def build_items(day0: datetime, day1: datetime, visits_raw: list[dict], pts: lis
                 steps: list[dict], carplay: list[dict], places: list[dict], checkins: list[dict] | None = None) -> dict:
     """[day0, day1) 하루 (UTC). carplay: [{event, at}] 시간순. places: 자동 체크인 장소 [{name, lat, lon, radius}]."""
     visits = merge_visits(visits_raw)
+    # 떠난 시각 = 움직이기 시작한 때 (앱은 반경을 벗어난 뒤에야 알아챔)
+    for v in visits:
+        if not v.get("open"):
+            ms = timefix.move_start(acts, v["end"], not_before=v["start"])
+            if ms and v["start"] < ms < v["end"]:
+                v["end"] = ms
     # 이름: 스웜 체크인을 시간이 맞는(들어오기 10분 전 ~ 나가고 30분 뒤 — 늦게 누른 체크인) 머문 곳 중 가장 가까운 곳(200m 안)에 붙임
     names: dict[int, dict] = {}
     best: dict[int, float] = {}
@@ -153,6 +161,10 @@ def build_items(day0: datetime, day1: datetime, visits_raw: list[dict], pts: lis
         if km < 0.05:
             continue
         t0, t1 = r[0]["ts"], r[-1]["ts"]
+        # 이동 시작 = 바로 앞 머문 곳을 떠난 시각 (첫 위치 점은 반경을 벗어난 뒤)
+        prev_end = max((v["end"] for v in visits if v["end"] <= t0 and t0 - v["end"] <= MERGE_GAP), default=None)
+        if prev_end:
+            t0 = prev_end
         mode = move_mode(r, acts, steps)
         drove = any(a <= t1 and t0 <= b for a, b in sessions)
         if drove:
