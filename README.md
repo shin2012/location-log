@@ -63,6 +63,11 @@ NPM 호스트 75 `location.b-612.kr` → `location-api:8000` (인증서 `*.b-612
 SwiftUI 앱. 백그라운드에서도 GPS 기록. `https://location.b-612.kr/app-api/` (Bearer `APP_TOKEN`, `.env`)로 같은 API 사용.
 자세한 내용: [ios/README.md](ios/README.md)
 
+## 걷기 감지 후 확인 GPS (1.2)
+- 머무는 중 움직임 감지(걷기·차 등) → 3분간 정밀 GPS로 확인(`probing`). '멈춤'은 2분 이어져야 끔(엘리베이터 앞 잠깐 멈춤 무시).
+- 확인 중 머문 곳 반경 안에서 받은 점은 모아 뒀다가 떠난 것으로 판정되면 떠난 시각 이후 점을 경로 앞에 붙임(현관 → 차), 아니면 버림. 떠난 시각 = 처음 움직이기 시작한 때(2분 미만 멈춤 무시).
+- 시험: `swiftc -O ios/LocationLog/DayPolicy.swift tools/probetest/main.swift -o /tmp/pt && /tmp/pt`
+
 ## 충전 중 · 운전 · CarPlay (v0.7)
 - 충전 중(발열 '심각' 미만): 움직일 때 '정밀', 머무는 동안 GPS 확인 3분마다 (`chargePrecise`)
 - 차로 이동(CarPlay 연결 또는 동작 '자동차') + 충전 중: 경로 기록을 자동으로 켬(`Recorder.startAuto`, 이름 '운전 · …' = CarPlay 연결, '차량 이동 · …' = 연결 없음) → 1초 GPS + 터널 센서 추정. 그 점(trk)과 추정점(imu)이 하루 종일 기록에도 들어감. 조건이 풀리면 3분(CarPlay 해제 직후면 1분) 뒤 끔. 직접 켠 기록은 건드리지 않음 (`driveRecord`)

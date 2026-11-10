@@ -106,6 +106,8 @@ final class DayPolicy {
         var maxAcc: Double = 100       // m, 이보다 나쁜 위치는 안 씀
 
         static let probeTimeout: Double = 180   // s — 움직임 감지 뒤 이만큼 안 벗어나면 다시 머묾
+        static let stillOff: Double = 120       // s — 확인 중 이만큼 계속 멈춰 있어야 GPS 끔 (엘리베이터 앞 3초 멈춤은 무시)
+        static let probeBufMax = 400            // 확인 중 모아 두는 반경 안 점 최대 수
         static let checkTimeout: Double = 30    // s — 주기 확인 GPS 최대 시간
         static let checkGoodAcc: Double = 25    // m — 이 정도면 확인 끝
         static let maxSpeed: Double = 70        // m/s 순간 이동 거름
@@ -128,6 +130,10 @@ final class DayPolicy {
         var bestCheckFix: Double?      // checking 중 받은 가장 좋은 정확도
         // 마지막 저장 점
         var lastLat: Double?, lastLon: Double?, lastT: Double?
+        // 멈춤이 시작된 시각 (움직임 감지 'stationary'). 짧은 멈춤 판정·확인 중 GPS 끄기에 씀
+        var stopAt: Double?
+        // 확인(probing) 중 머문 곳 반경 안에서 받은 점 — 떠난 것으로 판정되면 경로 앞에 붙이고, 아니면 버림
+        var probeBuf: [DayPoint]?
     }
 
     var opt: Options
@@ -174,7 +180,10 @@ final class DayPolicy {
             // 거리 간격 때문에 멈추면 위치가 안 옴 → 머묾 판정은 시계로
             guard let a = s.anchorT else { return now + 60 }
             return max(now + 5, a + Double(opt.stayMinutes) * 60 + 1)
-        case .probing: return s.phaseStart + Options.probeTimeout
+        case .probing:
+            var at = s.phaseStart + Options.probeTimeout
+            if s.activity == .stationary, let st = s.stopAt { at = min(at, max(now + 5, st + Options.stillOff)) }
+            return at
         case .checking: return s.phaseStart + Options.checkTimeout
         case .stationary:
             guard opt.keepAlive, opt.checkMinutes > 0 else { return nil }
@@ -193,6 +202,7 @@ final class DayPolicy {
             }
         case .probing:
             if now - s.phaseStart >= Options.probeTimeout { backToStay(now) }
+            else if s.activity == .stationary, let st = s.stopAt, now - st >= Options.stillOff { backToStay(now) }
         case .checking:
             if now - s.phaseStart >= Options.checkTimeout { backToStay(now) }
         case .stationary:
@@ -225,16 +235,24 @@ final class DayPolicy {
     func motion(_ a: DayActivity, start: Double, now: Double) -> [DayEvent] {
         let was = s.activity
         s.activity = a
-        if a.moving, !was.moving { s.activityStart = start }
+        if a.moving, !was.moving {
+            // 2분 안 된 멈춤 뒤 다시 움직임 → 같은 움직임으로 봄 (처음 움직이기 시작한 시각 유지)
+            let blip = s.stopAt.map { start - $0 < Options.stillOff } ?? false
+            if !(blip && s.activityStart != nil) { s.activityStart = start }
+            s.stopAt = nil
+        } else if a == .stationary, was != .stationary {
+            s.stopAt = start
+        }
         guard opt.motionWake else { return [] }
         switch s.phase {
         case .stationary, .checking:
             if a.moving {
                 s.phase = .probing
                 s.phaseStart = now
+                s.probeBuf = []
             }
         case .probing:
-            if a == .stationary { backToStay(now) }
+            break      // 멈춤은 2분 이어져야 끔 (tick)
         case .moving:
             break
         }
@@ -263,6 +281,14 @@ final class DayPolicy {
             if s.phase == .checking {
                 s.bestCheckFix = min(s.bestCheckFix ?? .infinity, f.acc)
                 if f.acc <= Options.checkGoodAcc { backToStay(f.t) }
+            }
+            if s.phase == .probing, precise {
+                var b = s.probeBuf ?? []
+                if b.count < Options.probeBufMax {
+                    b.append(DayPoint(ts: f.t * 1000, lat: f.lat, lon: f.lon, alt: f.alt, acc: f.acc, spd: f.spd,
+                                      src: f.src, act: s.activity.rawValue))
+                    s.probeBuf = b
+                }
             }
             return []
         }
@@ -322,6 +348,7 @@ final class DayPolicy {
         s.phase = .stationary
         s.lastCheck = now
         s.bestCheckFix = nil
+        s.probeBuf = nil
     }
 
     private func depart(_ f: DayFix) -> [DayEvent] {
@@ -332,6 +359,8 @@ final class DayPolicy {
 
     private func startMoving(_ f: DayFix, departAt: Double) -> [DayEvent] {
         var out: [DayEvent] = []
+        let buf = s.probeBuf ?? []
+        s.probeBuf = nil
         if let cLat = s.centerLat, let cLon = s.centerLon, let st = s.stayStart {
             out.append(.departed(DayVisitRec(arrive: st * 1000, depart: departAt * 1000, lat: cLat, lon: cLon)))
             if opt.fillGap, departAt < f.t {
@@ -339,6 +368,10 @@ final class DayPolicy {
                 out.append(.point(DayPoint(ts: departAt * 1000, lat: cLat, lon: cLon, alt: nil, acc: nil, spd: nil,
                                            src: "fill", act: s.activity.rawValue)))
                 s.lastLat = cLat; s.lastLon = cLon; s.lastT = departAt
+            }
+            // 확인 중 반경 안에서 받은 점 중 떠난 뒤 것 → 경로 앞부분 (현관 → 차)
+            for q in buf where q.ts >= departAt * 1000 && q.ts < f.t * 1000 {
+                out += store(DayFix(t: q.ts / 1000, lat: q.lat, lon: q.lon, acc: q.acc ?? 50, spd: q.spd, alt: q.alt, src: q.src))
             }
         }
         s.phase = .moving
