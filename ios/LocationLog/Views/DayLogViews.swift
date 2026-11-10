@@ -13,6 +13,7 @@ struct SettingsScreen: View {
     @AppStorage("keepAwake") private var keepAwake = true
     @AppStorage("mapProvider") private var mapProvider: MapProvider = .naver
     @ObservedObject private var maps = MapServices.shared
+    @State private var shotDayMap: String?    // CI 화면 캡처용 (Debug): 실행 인자 -shotDayMap YYYY-MM-DD → 날짜별 위치 원본 지도로 바로 넘어감
 
     var body: some View {
         NavigationStack {
@@ -73,6 +74,17 @@ struct SettingsScreen: View {
                 }
             }
             .navigationTitle("설정")
+            #if DEBUG
+            .navigationDestination(isPresented: Binding(get: { shotDayMap != nil }, set: { if !$0 { shotDayMap = nil } })) {
+                DayMapView(day: shotDayMap ?? "")
+            }
+            .task {
+                if let d = UserDefaults.standard.string(forKey: "shotDayMap"), !d.isEmpty {
+                    try? await Task.sleep(for: .milliseconds(800))
+                    shotDayMap = d
+                }
+            }
+            #endif
         }
     }
 

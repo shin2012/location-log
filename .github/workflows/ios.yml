@@ -13,6 +13,10 @@ on:
         description: "시뮬레이터 화면 캡처 (암호화해서 올림)"
         type: boolean
         default: false
+      shotset:
+        description: "캡처 묶음 (all = 탭·지도 전부, daymap = 날짜별 위치 원본 지도만)"
+        type: string
+        default: all
 
 env:
   NAVER_MAP_KEY_ID: ${{ secrets.NAVER_MAP_KEY_ID }}
@@ -55,6 +59,7 @@ jobs:
       - name: 캡처
         env:
           TOKEN: ${{ secrets.SILLAGE_APP_TOKEN }}
+          SHOTSET: ${{ inputs.shotset }}
         run: |
           APP=$(ls -d $RUNNER_TEMP/dd/Build/Products/Debug-iphonesimulator/*.app | head -1)
           BID=kr.b-612.sillage
@@ -68,6 +73,16 @@ jobs:
             xcrun simctl privacy $UDID grant location-always $BID || true
             xcrun simctl privacy $UDID grant motion $BID || true
             xcrun simctl location $UDID set 37.5472,126.9317 || true
+            for MP in naver google apple; do
+              xcrun simctl ui $UDID appearance light
+              xcrun simctl terminate $UDID $BID 2>/dev/null || true
+              xcrun simctl launch $UDID $BID -shotToken "$TOKEN" -tab settings -shotDayMap 2026-11-10 -mapProvider $MP >/dev/null
+              sleep 4
+              xcrun simctl io $UDID screenshot "shots/${DEV// /_}-daymap-$MP-4s.png" >/dev/null
+              sleep 8
+              xcrun simctl io $UDID screenshot "shots/${DEV// /_}-daymap-$MP-12s.png" >/dev/null
+            done
+            if [ "$SHOTSET" = "daymap" ]; then xcrun simctl shutdown $UDID; continue; fi
             for MODE in light dark; do
               xcrun simctl ui $UDID appearance $MODE
               for TAB in timeline autoCheckin record settings; do
