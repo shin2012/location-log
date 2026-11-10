@@ -122,6 +122,23 @@ struct MapFit: Equatable {
     var key: String
     var coords: [CLLocationCoordinate2D]
     static func == (a: MapFit, b: MapFit) -> Bool { a.key == b.key }
+
+    /// 지도 뷰가 카메라를 옮길 수 있는 상태인지: 크기가 잡히고 화면(window)에 붙어 있어야 함.
+    /// 화면 전환(push) 중에는 크기는 있어도 window 가 없어 카메라 이동이 무시됨 → SDK 기본 위치(네이버=분당)에 남음.
+    static func ready(_ v: UIView) -> Bool {
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "shotOldFit") { return v.bounds.width >= 10 && v.bounds.height >= 10 }
+        #endif
+        return v.bounds.width >= 10 && v.bounds.height >= 10 && v.window != nil
+    }
+
+    /// 맞춘 뒤 확인 다시 맞춤 시각(초) — 전환 애니메이션이 끝난 뒤 한 번 더 (사용자가 지도를 움직였으면 안 함)
+    static var recheck: [Double] {
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "shotOldFit") { return [] }
+        #endif
+        return [0.4, 1.0]
+    }
 }
 
 // MARK: - 공용 지도
@@ -312,15 +329,17 @@ private struct NaverMapRep: UIViewRepresentable {
         var dark: Bool?
         var fitKey: String?
         var follow: Binding<Bool>?
+        var userMoved = false
 
         /// 화면 맞춤. 처음 updateUIView 때는 지도 뷰 크기가 0이라 fit(bounds) 가 먹지 않고
         /// 카메라가 SDK 기본 위치(네이버 본사·분당)에 남음 → 가운데만 먼저 옮기고, 크기가 잡히면 다시 맞춤.
         func fit(_ v: NMFMapView, _ f: MapFit, tries: Int = 0) {
             guard let r = AppMap.region(f.coords) else { return }
+            if fitKey != f.key { userMoved = false }
             fitKey = f.key
             let b = NMGLatLngBounds(southWest: NMGLatLng(lat: r.sw.latitude, lng: r.sw.longitude),
                                     northEast: NMGLatLng(lat: r.ne.latitude, lng: r.ne.longitude))
-            if v.bounds.width < 10 || v.bounds.height < 10 {
+            if !MapFit.ready(v) {
                 if tries == 0 {
                     v.moveCamera(NMFCameraUpdate(scrollTo: NMGLatLng(lat: (r.sw.latitude + r.ne.latitude) / 2,
                                                                      lng: (r.sw.longitude + r.ne.longitude) / 2), zoomTo: 15))
@@ -335,11 +354,23 @@ private struct NaverMapRep: UIViewRepresentable {
             let u = NMFCameraUpdate(fit: b, padding: 40)
             u.animation = tries == 0 ? .easeIn : .none
             v.moveCamera(u)
+            do {
+                for d in MapFit.recheck {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + d) { [weak self, weak v] in
+                        guard let self, let v, self.fitKey == f.key, !self.userMoved, self.follow?.wrappedValue != true,
+                              MapFit.ready(v) else { return }
+                        let u = NMFCameraUpdate(fit: b, padding: 40)
+                        u.animation = .none
+                        v.moveCamera(u)
+                    }
+                }
+            }
         }
 
         func mapView(_ mapView: NMFMapView, cameraWillChangeByReason reason: Int, animated: Bool) {
-            if reason == NMFMapChangedByGesture, follow?.wrappedValue == true {
-                DispatchQueue.main.async { self.follow?.wrappedValue = false }
+            if reason == NMFMapChangedByGesture {
+                userMoved = true
+                if follow?.wrappedValue == true { DispatchQueue.main.async { self.follow?.wrappedValue = false } }
             }
         }
     }
@@ -416,12 +447,14 @@ private struct GoogleMapRep: UIViewRepresentable {
         var fitKey: String?
         var follow: Binding<Bool>?
         var onTapPin: ((String) -> Void)?
+        var userMoved = false
 
         /// 화면 맞춤 (크기 0일 때는 가운데만 옮기고, 크기가 잡히면 다시 맞춤 — 네이버와 같은 이유)
         func fit(_ v: GMSMapView, _ f: MapFit, tries: Int = 0) {
             guard let r = AppMap.region(f.coords) else { return }
+            if fitKey != f.key { userMoved = false }
             fitKey = f.key
-            if v.bounds.width < 10 || v.bounds.height < 10 {
+            if !MapFit.ready(v) {
                 if tries == 0 {
                     v.moveCamera(GMSCameraUpdate.setTarget(CLLocationCoordinate2D(latitude: (r.sw.latitude + r.ne.latitude) / 2,
                                                                                    longitude: (r.sw.longitude + r.ne.longitude) / 2), zoom: 15))
@@ -435,11 +468,19 @@ private struct GoogleMapRep: UIViewRepresentable {
             }
             let u = GMSCameraUpdate.fit(GMSCoordinateBounds(coordinate: r.sw, coordinate: r.ne), withPadding: 40)
             if tries == 0 { v.animate(with: u) } else { v.moveCamera(u) }
+            for d in MapFit.recheck {
+                DispatchQueue.main.asyncAfter(deadline: .now() + d) { [weak self, weak v] in
+                    guard let self, let v, self.fitKey == f.key, !self.userMoved, self.follow?.wrappedValue != true,
+                          MapFit.ready(v) else { return }
+                    v.moveCamera(GMSCameraUpdate.fit(GMSCoordinateBounds(coordinate: r.sw, coordinate: r.ne), withPadding: 40))
+                }
+            }
         }
 
         func mapView(_ mapView: GMSMapView, willMove gesture: Bool) {
-            if gesture, follow?.wrappedValue == true {
-                DispatchQueue.main.async { self.follow?.wrappedValue = false }
+            if gesture {
+                userMoved = true
+                if follow?.wrappedValue == true { DispatchQueue.main.async { self.follow?.wrappedValue = false } }
             }
         }
 

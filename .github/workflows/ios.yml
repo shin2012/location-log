@@ -73,14 +73,14 @@ jobs:
             xcrun simctl privacy $UDID grant location-always $BID || true
             xcrun simctl privacy $UDID grant motion $BID || true
             xcrun simctl location $UDID set 37.5472,126.9317 || true
+            xcrun simctl ui $UDID appearance light
             for MP in naver google apple; do
-              xcrun simctl ui $UDID appearance light
-              xcrun simctl terminate $UDID $BID 2>/dev/null || true
-              xcrun simctl launch $UDID $BID -shotToken "$TOKEN" -tab settings -shotDayMap 2026-11-10 -mapProvider $MP >/dev/null
-              sleep 4
-              xcrun simctl io $UDID screenshot "shots/${DEV// /_}-daymap-$MP-4s.png" >/dev/null
-              sleep 8
-              xcrun simctl io $UDID screenshot "shots/${DEV// /_}-daymap-$MP-12s.png" >/dev/null
+              for OLD in NO YES; do
+                xcrun simctl terminate $UDID $BID 2>/dev/null || true
+                xcrun simctl launch $UDID $BID -shotToken "$TOKEN" -tab settings -shotDayMap 2026-11-10 -shotPreload YES -shotOldFit $OLD -mapProvider $MP >/dev/null
+                sleep 10
+                xcrun simctl io $UDID screenshot "shots/${DEV// /_}-daymap-$MP-old$OLD.png" >/dev/null
+              done
             done
             if [ "$SHOTSET" = "daymap" ]; then xcrun simctl shutdown $UDID; continue; fi
             for MODE in light dark; do

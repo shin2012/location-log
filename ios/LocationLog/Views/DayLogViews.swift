@@ -14,6 +14,7 @@ struct SettingsScreen: View {
     @AppStorage("mapProvider") private var mapProvider: MapProvider = .naver
     @ObservedObject private var maps = MapServices.shared
     @State private var shotDayMap: String?    // CI 화면 캡처용 (Debug): 실행 인자 -shotDayMap YYYY-MM-DD → 날짜별 위치 원본 지도로 바로 넘어감
+    @State private var shotPre: ([DayPoint], [DayVisitRec])?
 
     var body: some View {
         NavigationStack {
@@ -76,10 +77,13 @@ struct SettingsScreen: View {
             .navigationTitle("설정")
             #if DEBUG
             .navigationDestination(isPresented: Binding(get: { shotDayMap != nil }, set: { if !$0 { shotDayMap = nil } })) {
-                DayMapView(day: shotDayMap ?? "")
+                if let pre = shotPre { DayMapView(day: shotDayMap ?? "", points: pre.0, visits: pre.1) }
+                else { DayMapView(day: shotDayMap ?? "") }
             }
             .task {
                 if let d = UserDefaults.standard.string(forKey: "shotDayMap"), !d.isEmpty {
+                    // -shotPreload YES: 점을 먼저 받아 두고 넘어감 (기기에 저장된 날처럼 첫 화면부터 경로 있음)
+                    if UserDefaults.standard.bool(forKey: "shotPreload"), let x = try? await API.day(d) { shotPre = (x.points, x.visits) }
                     try? await Task.sleep(for: .milliseconds(800))
                     shotDayMap = d
                 }
@@ -478,6 +482,15 @@ struct DayMapView: View {
     @EnvironmentObject var toaster: Toaster
     @State private var points: [DayPoint] = []
     @State private var visits: [DayVisitRec] = []
+
+    init(day: String) { self.day = day }
+
+    /// 점을 미리 넣고 시작 (첫 화면부터 경로가 있는 경우 = 이 기기에 저장된 날과 같은 상황; CI 캡처용)
+    init(day: String, points: [DayPoint], visits: [DayVisitRec]) {
+        self.day = day
+        _points = State(initialValue: points)
+        _visits = State(initialValue: visits)
+    }
     @State private var info = "불러오는 중…"
     @State private var confirmDelete = false
 
@@ -526,7 +539,9 @@ struct DayMapView: View {
 
     private func load() async {
         let local = store.points(day)
-        if !local.isEmpty {
+        if !points.isEmpty {
+            // 미리 받은 점 그대로
+        } else if !local.isEmpty {
             points = local
             visits = store.visits(day)
         } else if !AppSettings.shared.token.isEmpty {
