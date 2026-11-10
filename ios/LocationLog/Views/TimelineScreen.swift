@@ -45,6 +45,13 @@ struct TimelineScreen: View {
             .navigationDestination(isPresented: $showPoints) { DayMapView(day: key) }
             .task(id: key) { await load() }
             .refreshable { await load() }
+            // '타임라인' 탭을 다시 누르면(더블탭) 무조건 오늘로 — 이미 오늘이면 새로 불러옴
+            .onReceive(NotificationCenter.default.publisher(for: AppTab.reselected)) { n in
+                guard n.object as? AppTab == .timeline else { return }
+                picking = false; detail = nil; showPoints = false; selected = nil
+                let today = Calendar.current.startOfDay(for: Date())
+                if isToday { Task { await load() } } else { day = today }
+            }
         }
     }
 

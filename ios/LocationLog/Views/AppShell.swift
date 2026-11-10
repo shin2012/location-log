@@ -6,6 +6,9 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
     case timeline, autoCheckin, record, settings
     var id: String { rawValue }
 
+    /// 이미 고른 탭을 다시 누름 (타임라인 → 오늘로)
+    static let reselected = Notification.Name("AppTab.reselected")
+
     var title: String {
         switch self {
         case .timeline: return "타임라인"
@@ -31,11 +34,19 @@ struct RootView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     @AppStorage("tab") private var tab: AppTab = .timeline
 
+    /// 탭을 고를 때 — 같은 탭을 다시 누르면(더블탭 포함) 알림
+    private var tabBinding: Binding<AppTab> {
+        Binding(get: { tab }, set: { t in
+            if t == tab { NotificationCenter.default.post(name: AppTab.reselected, object: t) }
+            tab = t
+        })
+    }
+
     var body: some View {
         Group {
             if sizeClass == .regular {
                 NavigationSplitView {
-                    List(AppTab.allCases, selection: Binding<AppTab?>(get: { tab }, set: { if let t = $0 { tab = t } })) { t in
+                    List(AppTab.allCases, selection: Binding<AppTab?>(get: { tab }, set: { if let t = $0 { tabBinding.wrappedValue = t } })) { t in
                         Label(t.title, systemImage: t.symbol).tag(t)
                     }
                     .navigationTitle("시야쥬")
@@ -43,7 +54,7 @@ struct RootView: View {
                     screen(tab)
                 }
             } else {
-                TabView(selection: $tab) {
+                TabView(selection: tabBinding) {
                     ForEach(AppTab.allCases) { t in
                         screen(t)
                             .tabItem { Label(t.title, systemImage: t.symbol) }
