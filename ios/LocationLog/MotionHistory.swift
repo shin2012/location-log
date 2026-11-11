@@ -3,7 +3,7 @@ import CoreMotion
 
 /// 이동 방식(기기 동작 기록)과 1분 걸음(만보계)을 서버로 올림.
 ///
-/// iOS가 두 기록을 기기에 최근 7일만 보관하므로, 업로드 때마다 지난번 커서부터 다시 조회해 올린다.
+/// iOS가 두 기록을 기기에 최근 7일만 보관하므로, 업로드 때마다 지난번 커서부터 조회해 앱 보관함(Archives)에 영구 저장하고 거기서 올린다.
 /// 앱이 잠들어 실시간 감지를 못 받은 구간도 이렇게 채워진다. 권한은 '동작 및 피트니스' 하나.
 /// - 이동 방식: 바뀐 시각만 (같은 방식 연속은 하나로). 확신 낮은 '움직임'은 버림 (주머니 속 흔들림)
 /// - 걸음: 1분 단위, 0 걸음 분도 올림 (행이 있으면 그 분은 측정됨). 한 시간이 통째로 0이면 분별 조회 생략
@@ -26,21 +26,30 @@ final class MotionHistory: ObservableObject {
     /// 한 번에 조회할 걸음 분 수 (백그라운드 시간 제한 대비, 남은 건 다음 업로드에)
     private static let stepMinutesPerRun = 24 * 60
 
-    struct ActItem: Encodable { let ts: Double; let act: String; let conf: Int }
-    struct StepItem: Encodable { let ts: Double; let steps: Int; let dist: Double?; var up: Int? = nil; var down: Int? = nil }
+    struct ActItem: Codable { let ts: Double; let act: String; let conf: Int }
+    struct StepItem: Codable { let ts: Double; let steps: Int; let dist: Double?; var up: Int? = nil; var down: Int? = nil }
     struct ActsBody: Encodable { let acts: [ActItem] }
     struct StepsBody: Encodable { let steps: [StepItem] }
 
     /// 동작 기록 조회 결과 (Sendable 하게 옮기려고 값만 꺼냄)
     struct Act: Sendable { let start: Date; let kind: String; let conf: Int; let moving: Bool }
 
+    /// iOS 기록 → 앱 보관함(Archives, 지우지 않음) → 서버. 보관은 통신·토큰과 상관없이 먼저
     func upload(wifiOnly: Bool) async {
-        guard !busy, !AppSettings.shared.token.isEmpty else { return }
+        guard !busy else { return }
         busy = true
         defer { busy = false }
         do {
-            try await uploadActs(cellular: !wifiOnly)
-            try await uploadSteps(cellular: !wifiOnly)
+            try await collectActs()
+            try await collectSteps()
+            guard !AppSettings.shared.token.isEmpty else { return }
+            let cellular = !wifiOnly
+            try await Archives.acts.upload { b in
+                let _: OKResponse = try await API.send("POST", "day/acts", body: ActsBody(acts: b), cellular: cellular)
+            }
+            try await Archives.steps.upload(batch: 600) { b in
+                let _: OKResponse = try await API.send("POST", "day/steps", body: StepsBody(steps: b), cellular: cellular)
+            }
             lastUploadAt = Date()
             lastError = nil
         } catch {
@@ -59,7 +68,7 @@ final class MotionHistory: ObservableObject {
         return "unknown"
     }
 
-    private func uploadActs(cellular: Bool) async throws {
+    private func collectActs() async throws {
         guard CMMotionActivityManager.isActivityAvailable(),
               CMMotionActivityManager.authorizationStatus() == .authorized else { return }
         let ud = UserDefaults.standard
@@ -77,12 +86,7 @@ final class MotionHistory: ObservableObject {
             out.append(ActItem(ts: (a.start.timeIntervalSince1970 * 1000).rounded(), act: a.kind, conf: a.conf))
             last = a.kind
         }
-        var i = 0
-        while i < out.count {
-            let batch = Array(out[i..<min(out.count, i + 1000)])
-            let _: OKResponse = try await API.send("POST", "day/acts", body: ActsBody(acts: batch), cellular: cellular)
-            i += batch.count
-        }
+        Archives.acts.append(out)
         // 마지막 항목은 아직 진행 중일 수 있지만 시작 시각은 고정 → 그 다음부터 다시 조회
         if let l = list.last { ud.set(l.start.timeIntervalSince1970 + 0.001, forKey: Self.actCursorKey) }
         if let last { ud.set(last, forKey: Self.actLastKey) }
@@ -105,7 +109,7 @@ final class MotionHistory: ObservableObject {
 
     // MARK: 걸음
 
-    private func uploadSteps(cellular: Bool) async throws {
+    private func collectSteps() async throws {
         guard CMPedometer.isStepCountingAvailable() else { return }
         let auth = CMPedometer.authorizationStatus()
         guard auth == .authorized || auth == .notDetermined else { return }
@@ -120,7 +124,7 @@ final class MotionHistory: ObservableObject {
         var minutes = 0
         func flush() async throws {
             guard !buf.isEmpty else { return }
-            let _: OKResponse = try await API.send("POST", "day/steps", body: StepsBody(steps: buf), cellular: cellular)
+            Archives.steps.append(buf)
             buf.removeAll()
             ud.set(t.timeIntervalSince1970, forKey: Self.stepCursorKey)
         }

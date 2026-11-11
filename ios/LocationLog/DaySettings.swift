@@ -39,7 +39,7 @@ struct DayPrefs: Codable, Equatable {
     var quietStart = 0            // 시
     var quietEnd = 7
     var excluded: [Place] = []
-    var keepDays = 90             // 이 기기 보관
+    var keepDays = 0              // 이 기기 보관 (0 = 무제한, 1.8 부터 기본)
 
     init() {}
 

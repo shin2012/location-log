@@ -118,7 +118,7 @@ final class Baro: ObservableObject {
 
     struct Body: Encodable { let samples: [BaroSample] }
 
-    /// 올린 줄 수 다음부터 묶어 올림. 다 올린 14일 지난 파일은 지움
+    /// 올린 줄 수 다음부터 묶어 올림. 파일은 지우지 않음 (원본 보관)
     func upload(wifiOnly: Bool) async {
         guard !uploading, !AppSettings.shared.token.isEmpty else { return }
         uploading = true
@@ -138,12 +138,6 @@ final class Baro: ObservableObject {
                     uploaded[day] = done
                 }
                 if v.count < total { counts[day] = v.count }
-            }
-            let cut = DayLogStore.dayKey((Date().timeIntervalSince1970 - 14 * 86400) * 1000)
-            for day in counts.keys where day < cut && (uploaded[day] ?? 0) >= (counts[day] ?? 0) {
-                try? FileManager.default.removeItem(at: file(day))
-                counts[day] = nil
-                uploaded[day] = nil
             }
             lastUploadAt = Date()
             lastError = nil

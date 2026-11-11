@@ -345,6 +345,50 @@ def day_list(limit: int = 90):
                 for r in cur.fetchall()]
 
 
+def _sync_carplay(cur, a: datetime, b: datetime) -> None:
+    """swarm.FSQ_CarPlay(한국 시각) [a,b) 를 car_event 로 복사. 앱이 이미 보낸 같은 연결(±120초)은 건너뜀"""
+    cur.execute("SELECT id, event_type, event_time - INTERVAL 9 HOUR AS ts, lat, lng FROM swarm.FSQ_CarPlay "
+                "WHERE event_time >= %s AND event_time < %s AND id NOT IN (SELECT fsq_id FROM car_event WHERE fsq_id IS NOT NULL)",
+                (a + timedelta(hours=9), b + timedelta(hours=9)))
+    for r in cur.fetchall():
+        if r["event_type"] not in ("car_start", "car_end"):
+            continue
+        n = cur.execute("UPDATE car_event SET fsq_id=%s WHERE event=%s AND fsq_id IS NULL AND ts BETWEEN %s AND %s LIMIT 1",
+                        (r["id"], r["event_type"], r["ts"] - timedelta(seconds=120), r["ts"] + timedelta(seconds=120)))
+        if not n:
+            def f(x):
+                try:
+                    return float(x)
+                except (TypeError, ValueError):
+                    return None
+            cur.execute("INSERT IGNORE INTO car_event (ts, event, lat, lng, src, fsq_id) VALUES (%s,%s,%s,%s,'fsq',%s)",
+                        (r["ts"], r["event_type"], f(r["lat"]), f(r["lng"]), r["id"]))
+
+
+def _checkins(cur, a: datetime, b: datetime) -> list[dict]:
+    """스웜 체크인 [a,b): 원본과 비교해 사본(checkin_snap) 갱신 — 새 것 추가, 이름·좌표 바뀌면 고침, 원본에서 사라지면 표시만.
+    타임라인은 사본을 씀 (원본이 지워져도 이름 유지)"""
+    cur.execute("SELECT FSQ_ID AS id, FROM_UNIXTIME(FSQ_UNIXTIME) AS ts, VENUE AS name, LAT+0 AS lat, LNG+0 AS lon FROM swarm.FSQ_Swarm "
+                "WHERE FSQ_UNIXTIME >= UNIX_TIMESTAMP(%s) AND FSQ_UNIXTIME < UNIX_TIMESTAMP(%s)", (a, b))
+    src = {r["id"]: r for r in cur.fetchall()}
+    cur.execute("SELECT fsq_id, venue, lat, lon, gone_at FROM checkin_snap WHERE ts >= %s AND ts < %s", (a, b))
+    have = {r["fsq_id"]: r for r in cur.fetchall()}
+    for k, r in src.items():
+        h = have.get(k)
+        lat, lon = float(r["lat"]), float(r["lon"])
+        if not h:
+            cur.execute("INSERT IGNORE INTO checkin_snap (fsq_id, ts, venue, lat, lon) VALUES (%s,%s,%s,%s,%s)",
+                        (k, r["ts"], r["name"], lat, lon))
+        elif h["venue"] != r["name"] or abs(h["lat"] - lat) > 1e-6 or abs(h["lon"] - lon) > 1e-6 or h["gone_at"]:
+            cur.execute("UPDATE checkin_snap SET ts=%s, venue=%s, lat=%s, lon=%s, changed_at=NOW(), gone_at=NULL WHERE fsq_id=%s",
+                        (r["ts"], r["name"], lat, lon, k))
+    for k, h in have.items():
+        if k not in src and not h["gone_at"]:
+            cur.execute("UPDATE checkin_snap SET gone_at=NOW() WHERE fsq_id=%s", (k,))
+    cur.execute("SELECT ts, venue AS name, lat, lon FROM checkin_snap WHERE ts >= %s AND ts < %s ORDER BY ts", (a, b))
+    return cur.fetchall()
+
+
 @app.get("/api/day/{date}/timeline")
 def day_timeline(date: str):
     """타임라인 탭: 머문 곳·이동(방식·운전 여부·걸음·경로)을 시간순으로. 시각은 epoch ms."""
@@ -362,17 +406,14 @@ def day_timeline(date: str):
         acts = cur.fetchall()
         cur.execute("SELECT ts, steps, floors_up, floors_down FROM day_step WHERE ts >= %s AND ts < %s ORDER BY ts", (a, b))
         steps = cur.fetchall()
-        # 운전 판정: swarm.FSQ_CarPlay (앱·단축어 둘 다 여기로 모임, 한국 시각) — loc_rw 에 SELECT 권한
-        cur.execute("SELECT event_type AS event, event_time - INTERVAL 9 HOUR AS at FROM swarm.FSQ_CarPlay "
-                    "WHERE event_time >= %s AND event_time < %s ORDER BY event_time",
-                    (a + timedelta(hours=3), b + timedelta(hours=9)))
+        # 운전 판정: 시야쥬 사본 car_event (조회 때 swarm.FSQ_CarPlay 새 것 복사 — 원본이 지워져도 남음)
+        _sync_carplay(cur, a - timedelta(hours=6), b)
+        cur.execute("SELECT event, ts AS at FROM car_event WHERE ts >= %s AND ts < %s ORDER BY ts",
+                    (a - timedelta(hours=6), b))
         cps = cur.fetchall()
         cur.execute("SELECT name, lat, lon, radius FROM auto_place")
         places = cur.fetchall()
-        cur.execute("SELECT FROM_UNIXTIME(FSQ_UNIXTIME) AS ts, VENUE AS name, LAT+0 AS lat, LNG+0 AS lon FROM swarm.FSQ_Swarm "
-                    "WHERE FSQ_UNIXTIME BETWEEN UNIX_TIMESTAMP(%s) - 43200 AND UNIX_TIMESTAMP(%s) ORDER BY FSQ_UNIXTIME",
-                    (a, b))
-        cks = [{**c, "lat": float(c["lat"]), "lon": float(c["lon"])} for c in cur.fetchall()]
+        cks = _checkins(cur, a - timedelta(hours=12), b)
         parks = _parks(cur, a - timedelta(hours=1), b + timedelta(hours=1))
         cur.execute("SELECT ts, kpa FROM day_baro WHERE ts >= %s AND ts < %s ORDER BY ts", (a - timedelta(hours=1), b))
         baro = cur.fetchall()
@@ -436,6 +477,10 @@ def carplay(body: CarPlayIn):
     import urllib.request
     if body.event not in ("car_start", "car_end"):
         raise HTTPException(400, "event 는 car_start / car_end")
+    # 시야쥬 사본 먼저 (전달이 실패해도 남음, 다시 보내도 같은 행)
+    with db() as cur:
+        cur.execute("INSERT IGNORE INTO car_event (ts, event, lat, lng, src) VALUES (%s,%s,%s,%s,'app')",
+                    (ms_to_dt(body.ts), body.event, body.lat, body.lng))
     url, tok = os.environ.get("FSQ_CARPLAY_URL"), os.environ.get("CARPLAY_API_TOKEN")
     if not url or not tok:
         raise HTTPException(503, "CarPlay 전달 설정 없음")
@@ -508,14 +553,16 @@ class HkBody(BaseModel):
 
 @app.post("/api/day/health")
 def day_health(body: HkBody):
-    """건강 앱 워치 걸음·오른 층수 (1.6). uuid 기준 REPLACE, 지워진 건 지움"""
+    """건강 앱 워치 걸음·오른 층수 (1.6). uuid 기준 저장, 건강 앱에서 지워진 건 표시만(사본 유지)"""
     rows = [(x.uuid, x.kind, ms_to_dt(x.start), ms_to_dt(x.end), x.value, x.device)
             for x in body.items if x.kind in ("steps", "flights")]
     with db() as cur:
         if rows:
-            cur.executemany("REPLACE INTO day_hk (uuid, kind, start, end, value, device) VALUES (%s,%s,%s,%s,%s,%s)", rows)
-        for u in body.deleted:
-            cur.execute("DELETE FROM day_hk WHERE uuid=%s", (u,))
+            cur.executemany("INSERT INTO day_hk (uuid, kind, start, end, value, device) VALUES (%s,%s,%s,%s,%s,%s) "
+                            "ON DUPLICATE KEY UPDATE kind=VALUES(kind), start=VALUES(start), end=VALUES(end), "
+                            "value=VALUES(value), device=VALUES(device)", rows)
+        for u in body.deleted:   # 건강 앱에서 지워져도 사본은 남김 (타임라인이 안 바뀌게) — 표시만
+            cur.execute("UPDATE day_hk SET deleted_at=NOW() WHERE uuid=%s AND deleted_at IS NULL", (u,))
     return {"ok": True, "n": len(rows), "deleted": len(body.deleted)}
 
 

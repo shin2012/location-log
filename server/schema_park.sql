@@ -54,3 +54,32 @@ CREATE TABLE IF NOT EXISTS day_hk (
   PRIMARY KEY (uuid),
   KEY (start)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='건강 앱 걸음·층';
+
+-- 1.8.0: 다른 앱 데이터에 기대지 않게 시야쥬 쪽에 사본
+-- CarPlay 연결·해제: 앱이 보낸 것 + swarm.FSQ_CarPlay(단축어 등)를 조회할 때 복사. 원본이 지워져도 남음
+CREATE TABLE IF NOT EXISTS car_event (
+  ts     DATETIME(3) NOT NULL COMMENT 'UTC',
+  event  VARCHAR(10) NOT NULL COMMENT 'car_start | car_end',
+  lat    DOUBLE NULL,
+  lng    DOUBLE NULL,
+  src    VARCHAR(8) NOT NULL DEFAULT 'app' COMMENT 'app | fsq',
+  fsq_id INT NULL,
+  PRIMARY KEY (ts, event),
+  UNIQUE KEY (fsq_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='CarPlay 연결 사본';
+
+-- 스웜 체크인 이름 사본: 타임라인 조회 때 원본과 비교해 바뀌었으면 고침, 원본에서 사라져도 남김(gone_at)
+CREATE TABLE IF NOT EXISTS checkin_snap (
+  fsq_id     VARCHAR(24) NOT NULL,
+  ts         DATETIME NOT NULL COMMENT 'UTC',
+  venue      VARCHAR(255) NOT NULL,
+  lat        DOUBLE NOT NULL,
+  lon        DOUBLE NOT NULL,
+  seen_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  changed_at TIMESTAMP NULL,
+  gone_at    TIMESTAMP NULL COMMENT '원본에서 사라진 걸 알아챈 때 (그래도 씀)',
+  PRIMARY KEY (fsq_id),
+  KEY (ts)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='스웜 체크인 사본';
+
+ALTER TABLE day_hk ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL COMMENT '건강 앱에서 지워짐 (사본은 남겨 계속 씀)';

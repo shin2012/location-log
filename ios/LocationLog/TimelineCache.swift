@@ -1,7 +1,7 @@
 import Foundation
 
 /// 타임라인 기기 저장본: 날짜별 서버 응답 원본 (Application Support/timeline/YYYY-MM-DD.json).
-/// 인터넷이 없거나 서버에 못 붙을 때 마지막으로 받은 타임라인을 보여 줌. 60일 지난 건 지움.
+/// 인터넷이 없거나 서버에 못 붙을 때 마지막으로 받은 타임라인을 보여 줌. 지우지 않음.
 @MainActor
 enum TimelineCache {
     private static var dir: URL {
@@ -13,7 +13,6 @@ enum TimelineCache {
 
     static func save(_ day: String, _ data: Data) {
         try? data.write(to: dir.appendingPathComponent("\(day).json"), options: .atomic)
-        prune()
     }
 
     /// (내용, 받은 시각)
@@ -22,13 +21,6 @@ enum TimelineCache {
         guard let d = try? Data(contentsOf: u), let t = try? API.decode(TimelineDay.self, d) else { return nil }
         let at = (try? FileManager.default.attributesOfItem(atPath: u.path)[.modificationDate] as? Date) ?? Date()
         return (t, at)
-    }
-
-    private static func prune() {
-        let cut = DayLogStore.dayKey((Date().timeIntervalSince1970 - 60 * 86400) * 1000)
-        for n in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [] where n.hasSuffix(".json") && String(n.dropLast(5)) < cut {
-            try? FileManager.default.removeItem(at: dir.appendingPathComponent(n))
-        }
     }
 }
 
@@ -47,6 +39,8 @@ final class FloorFixes {
     /// 넣고 바로 보내 봄. 보냈으면 true
     @discardableResult
     func add(_ f: FloorFixBody) async -> Bool {
+        Archives.edits.append([EditRecord(at: (Date().timeIntervalSince1970 * 1000).rounded(), kind: "floor", ts: f.ts, level: f.level)])
+        Archives.edits.markAllUploaded()
         pending.removeAll { abs($0.ts - f.ts) < 2 }
         pending.append(f)
         save()

@@ -18,7 +18,6 @@ final class WifiLog: ObservableObject {
     @Published private(set) var current: Ev?
     @Published private(set) var lastError: String?
 
-    private var pending: [Ev] = []
     private var monitor: NWPathMonitor?
     private var lastCheck = Date.distantPast
     private var checking = false
@@ -27,7 +26,11 @@ final class WifiLog: ObservableObject {
 
     private init() {
         let ud = UserDefaults.standard
-        if let d = ud.data(forKey: Self.pendingKey), let v = try? JSONDecoder().decode([Ev].self, from: d) { pending = v }
+        // 1.7 까지 보내기 대기 목록 → 보관함으로 옮김
+        if let d = ud.data(forKey: Self.pendingKey), let v = try? JSONDecoder().decode([Ev].self, from: d), !v.isEmpty {
+            Archives.wifi.append(v)
+        }
+        ud.removeObject(forKey: Self.pendingKey)
         if let d = ud.data(forKey: Self.currentKey), let v = try? JSONDecoder().decode(Ev.self, from: d) { current = v }
     }
 
@@ -64,21 +67,21 @@ final class WifiLog: ObservableObject {
         if let c = current, c.bssid == b { return }
         let e = Ev(ts: (Date().timeIntervalSince1970 * 1000).rounded(), bssid: b, ssid: b == nil ? nil : ssid)
         current = e
-        pending.append(e)
-        if pending.count > 2000 { pending.removeFirst(pending.count - 2000) }
+        Archives.wifi.append([e])     // 보관함(지우지 않음) → 업로드 때 서버로
         save()
     }
 
     struct Body: Encodable { let events: [Ev] }
 
     func upload(wifiOnly: Bool) async {
-        guard !sending, !pending.isEmpty, !AppSettings.shared.token.isEmpty else { return }
+        guard !sending, Archives.wifi.pending > 0, !AppSettings.shared.token.isEmpty else { return }
         sending = true
-        defer { sending = false; save() }
+        defer { sending = false }
         do {
-            let batch = pending
-            let _: OKResponse = try await API.send("POST", "day/wifi", body: Body(events: batch), cellular: !wifiOnly)
-            pending.removeAll { batch.contains($0) }
+            let cellular = !wifiOnly
+            try await Archives.wifi.upload { b in
+                let _: OKResponse = try await API.send("POST", "day/wifi", body: Body(events: b), cellular: cellular)
+            }
             lastError = nil
         } catch {
             lastError = "공유기: " + error.localizedDescription
@@ -87,7 +90,6 @@ final class WifiLog: ObservableObject {
 
     private func save() {
         let ud = UserDefaults.standard
-        ud.set(try? JSONEncoder().encode(pending), forKey: Self.pendingKey)
         ud.set(current.flatMap { try? JSONEncoder().encode($0) }, forKey: Self.currentKey)
     }
 }

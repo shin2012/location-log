@@ -29,6 +29,8 @@
 | `day_wifi` | 연결 공유기가 바뀐 시각: ts(PK), bssid(공유기 고유번호, NULL=연결 없음), ssid — 층 판정 보조 (1.5.0) |
 | `floor_cal` | 사용자가 확정한 층 구간: ts(구간 시작, PK), lat, lon, dh, level, ap(BSSID 앞 5바이트) (1.5.0) |
 | `day_hk` | 건강 앱 기록: uuid(PK), kind(steps=워치 걸음만 / flights=오른 층수), start, end, value, device(watch/phone) (1.6.0) |
+| `car_event` | CarPlay 연결 사본: ts(UTC)+event(PK), lat, lng, src(app/fsq), fsq_id — 앱이 보낸 것 + 조회 때 swarm.FSQ_CarPlay 복사. 타임라인 운전은 이것만 봄 (1.8.0) |
+| `checkin_snap` | 스웜 체크인 사본: fsq_id(PK), ts, venue, lat, lon, changed_at, gone_at — 조회 때 원본과 비교해 고침, 원본에서 사라져도 남김 (1.8.0) |
 | `park` | 주차: ts(CarPlay 해제, PK), lat, lon, dh(지상 도로 대비 m), ref_ts, level_est, level_user(사용자 확정) — level 지상1층=0·지하1층=-1 |
 
 <details><summary>API (앱은 <code>/app-api/…</code> 로 부름 = <code>/api/…</code>, 모두 Bearer 토큰)</summary>
@@ -131,4 +133,8 @@ flowchart LR
 - 층 고침(`FloorFixes`)·주차 고침(`Parking.patches`)은 통신이 안 되면 기기에 쌓았다가 업로드 때 보냄("연결되면 반영합니다").
 - 기록 수집(하루 기록 점·방문·동작·걸음·기압·공유기·건강·CarPlay·자동 체크인·주차)은 모두 기기에 쌓고 커서 기준으로 나중에 올림 — 통신 없이도 기록은 계속됨. 주차 층 추정·알림도 기기에서(보정값은 저장본).
 - 지도 '따라가기' 첫 화면: 네이버 SDK 위치 추적은 크기 0 첫 화면에서 카메라를 안 옮겨 기본 위치(네이버 본사)에 남음 → 내 위치(없으면 iOS 마지막 위치 `CLLocationManager().location`)로 직접 이동.
+
+## 원본 보관 (1.8.0) — 다른 앱에서 원본이 없어져도 타임라인이 안 바뀌게
+- 앱: `Archive.swift` `ArchiveLog<T>` = 종류별·날짜별 JSONL(Application Support/archive/<종류>/), **지우지 않음**. 받은 순간 먼저 보관 → 서버로는 줄 수 커서로(실패하면 이어서). 종류: act·step(iOS 동작·걸음, iOS는 7일만 보관)·health(워치, 지워짐은 표시만)·wifi·carplay·park·edit(사용자 고침). 기압 파일도 안 지움, 위치 점 '이 기기 보관' 기본 무제한. 1.8 첫 실행에 iOS 지난 7일·건강 앱 30일을 보관함에 다시 채움(`Archives.migrateOnce`).
+- 서버: 타임라인이 다른 앱 표를 직접 안 씀 — 운전 = `car_event`(조회 때 FSQ_CarPlay 새 것 복사, ±120초 같은 연결은 합침), 장소 이름 = `checkin_snap`(조회 때 원본과 비교해 바뀌면 고침, 사라지면 gone_at 만). 건강 앱 삭제는 `day_hk.deleted_at` 표시만.
 

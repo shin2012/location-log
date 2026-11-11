@@ -89,7 +89,9 @@ final class CarPlayEvents: ObservableObject {
     }
 
     func add(_ on: Bool, at: Date, lat: Double?, lng: Double?) {
-        pending.append(Event(event: on ? "car_start" : "car_end", ts: (at.timeIntervalSince1970 * 1000).rounded(), lat: lat, lng: lng))
+        let e = Event(event: on ? "car_start" : "car_end", ts: (at.timeIntervalSince1970 * 1000).rounded(), lat: lat, lng: lng)
+        Archives.carplay.append([e]); Archives.carplay.markAllUploaded()   // 보관 (보내기는 아래 대기 목록이 맡음)
+        pending.append(e)
         if pending.count > 200 { pending.removeFirst(pending.count - 200) }
         save()
         Task { await flush() }

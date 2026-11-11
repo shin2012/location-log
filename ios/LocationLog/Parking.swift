@@ -83,6 +83,7 @@ final class Parking: ObservableObject {
         let p = Post(ts: (now * 1000).rounded(), lat: lat, lon: lon, dh: (dh * 100).rounded() / 100,
                      refTs: (f * 1000).rounded(), level: level)
         posts.append(p)
+        Archives.park.append([p]); Archives.park.markAllUploaded()   // 보관 (보내기는 posts 가 맡음)
         if posts.count > 50 { posts.removeFirst(posts.count - 50) }
         lastPark = p
         save()
@@ -125,6 +126,8 @@ final class Parking: ObservableObject {
     /// 사용자가 층을 정함 (nil = 고친 것 취소)
     func setLevel(ts: Double, level: Int?) async {
         patches[String(Int(ts.rounded()))] = level ?? -99
+        Archives.edits.append([EditRecord(at: (Date().timeIntervalSince1970 * 1000).rounded(), kind: "park", ts: ts, level: level)])
+        Archives.edits.markAllUploaded()
         if let level, let p = posts.first(where: { abs($0.ts - ts) < 2 }) ?? (lastPark.flatMap { abs($0.ts - ts) < 2 ? $0 : nil }),
            let la = p.lat, let lo = p.lon {
             cal.append(ParkCal(lat: la, lon: lo, dh: p.dh, level: level))   // 통신 전에도 다음 추정에 바로 반영

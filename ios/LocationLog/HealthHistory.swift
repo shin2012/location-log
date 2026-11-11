@@ -18,6 +18,8 @@ final class HealthHistory: ObservableObject {
     private let store = HKHealthStore()
     private var busy = false
     private static let backfill: TimeInterval = 2 * 86400
+    static let deletedKind = "deleted"            // 보관함에 '건강 앱에서 지워짐' 표시 (사본은 남김)
+    static let backfillKey = "health.backfillDays"  // 1.8 이전 기록을 보관함에 다시 채울 때
 
     struct Item: Codable, Sendable {
         let uuid: String
@@ -43,17 +45,26 @@ final class HealthHistory: ObservableObject {
         store.requestAuthorization(toShare: [], read: Set(types)) { _, _ in }
     }
 
+    /// 건강 앱 → 앱 보관함(지우지 않음) → 서버
     func upload(wifiOnly: Bool) async {
-        guard Self.available, !busy, !AppSettings.shared.token.isEmpty, DaySettings.shared.prefs.watchHealth else { return }
+        guard Self.available, !busy, DaySettings.shared.prefs.watchHealth else { return }
         busy = true
         defer { busy = false }
         do {
             var n = 0
             for t in types {
-                n += try await sync(t, cellular: !wifiOnly)
+                n += try await collect(t)
             }
-            lastCount = n
-            lastUploadAt = Date()
+            if n > 0 { lastCount = n }
+            if !AppSettings.shared.token.isEmpty {
+                let cellular = !wifiOnly
+                try await Archives.health.upload { b in
+                    let items = b.filter { $0.kind != Self.deletedKind }
+                    let del = b.filter { $0.kind == Self.deletedKind }.map(\.uuid)
+                    let _: OKResponse = try await API.send("POST", "day/health", body: Body(items: items, deleted: del), cellular: cellular)
+                }
+                lastUploadAt = Date()
+            }
             lastError = nil
         } catch {
             lastError = "건강 앱: " + error.localizedDescription
@@ -62,7 +73,16 @@ final class HealthHistory: ObservableObject {
 
     private func anchorKey(_ t: HKQuantityType) -> String { "health.anchor.\(t.identifier)" }
 
-    private func sync(_ t: HKQuantityType, cellular: Bool) async throws -> Int {
+    /// 1.8: 보관함을 비운 상태에서 시작 → 기준점을 지우고 지난 days 일을 다시 받아 보관함에 채움
+    static func resetForArchive(days: Double) {
+        for id in ["HKQuantityTypeIdentifierStepCount", "HKQuantityTypeIdentifierFlightsClimbed"] {
+            UserDefaults.standard.removeObject(forKey: "health.anchor.\(id)")
+        }
+        UserDefaults.standard.set(days, forKey: backfillKey)
+    }
+
+    /// 새로 들어온 기록을 보관함에. 지워진 것은 '지워짐' 표시만 (사본은 남겨 타임라인이 안 바뀌게)
+    private func collect(_ t: HKQuantityType) async throws -> Int {
         let ud = UserDefaults.standard
         var anchor: HKQueryAnchor?
         if let d = ud.data(forKey: anchorKey(t)) {
@@ -70,7 +90,8 @@ final class HealthHistory: ObservableObject {
         }
         let isSteps = t == HKQuantityType(.stepCount)
         let unit = HKUnit.count()
-        let pred = HKQuery.predicateForSamples(withStart: Date().addingTimeInterval(-Self.backfill), end: nil)
+        let back = ud.double(forKey: Self.backfillKey) > 0 ? ud.double(forKey: Self.backfillKey) * 86400 : Self.backfill
+        let pred = HKQuery.predicateForSamples(withStart: Date().addingTimeInterval(-back), end: nil)
         let (added, deleted, next) = try await query(t, anchor: anchor, predicate: anchor == nil ? pred : nil)
         var items: [Item] = []
         for s in added {
@@ -82,16 +103,9 @@ final class HealthHistory: ObservableObject {
                               end: (q.endDate.timeIntervalSince1970 * 1000).rounded(),
                               value: q.quantity.doubleValue(for: unit), device: dev))
         }
-        let del = deleted.map { $0.uuid.uuidString }
-        var i = 0
-        repeat {
-            let batch = Array(items[i..<min(items.count, i + 1000)])
-            if !batch.isEmpty || (i == 0 && !del.isEmpty) {
-                let _: OKResponse = try await API.send("POST", "day/health", body: Body(items: batch, deleted: i == 0 ? del : []),
-                                                       cellular: cellular)
-            }
-            i += 1000
-        } while i < items.count
+        let now = (Date().timeIntervalSince1970 * 1000).rounded()
+        items += deleted.map { Item(uuid: $0.uuid.uuidString, kind: Self.deletedKind, start: now, end: now, value: 0, device: "") }
+        Archives.health.append(items)
         if let next, let d = try? NSKeyedArchiver.archivedData(withRootObject: next, requiringSecureCoding: true) {
             ud.set(d, forKey: anchorKey(t))
         }
