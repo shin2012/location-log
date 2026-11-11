@@ -4,6 +4,7 @@ import MapKit
 /// 타임라인: 그날 지도 + 머문 곳·이동 목록 (서버 /api/day/{date}/timeline)
 struct TimelineScreen: View {
     @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject var toaster: Toaster
     @ObservedObject private var logger = DayLogger.shared
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var day: Date = {
@@ -21,6 +22,7 @@ struct TimelineScreen: View {
     @State private var picking = false
     @State private var showPoints = false
     @State private var fitReq: MapFit?
+    @State private var offlineAt: Date?          // 서버에 못 붙어 저장본을 보여 주는 중
 
     private var key: String { DayLogStore.dayFmt.string(from: day) }
     private var isToday: Bool { Calendar.current.isDateInToday(day) }
@@ -43,7 +45,7 @@ struct TimelineScreen: View {
             .sheet(isPresented: $picking) { datePicker }
             .sheet(item: $detail) { TimelineDetailSheet(item: $0) }
             .navigationDestination(isPresented: $showPoints) { DayMapView(day: key) }
-            .task(id: key) { await load() }
+            .task(id: key) { data = nil; offlineAt = nil; await load() }
             .refreshable { await load() }
             // '타임라인' 탭을 다시 누르면(더블탭) 무조건 오늘로 — 이미 오늘이면 새로 불러옴
             .onReceive(NotificationCenter.default.publisher(for: AppTab.reselected)) { n in
@@ -66,6 +68,13 @@ struct TimelineScreen: View {
 
     private var list: some View {
         List {
+            if let at = offlineAt {
+                Section {
+                    Label("서버에 연결하지 못해 \(Fmt.hm(at.timeIntervalSince1970 * 1000))에 받은 기록을 보여 줍니다. 기록은 기기에 쌓이고 연결되면 올라갑니다.",
+                          systemImage: "wifi.slash")
+                        .font(.footnote).foregroundStyle(.orange)
+                }
+            }
             if logger.running && isToday {
                 Section {
                     Label(logger.statusText, systemImage: logger.autoDriving ? "steeringwheel" : "location.fill")
@@ -215,34 +224,45 @@ struct TimelineScreen: View {
 
     // MARK: 불러오기
 
+    /// 서버에서 받아 기기에 저장. 못 받으면(인터넷 없음·서버 안 됨) 마지막 저장본을 보여 주고 위에 알림
     private func load() async {
         selected = nil
         guard !settings.token.isEmpty else { data = nil; return }
+        let day = key
+        if data == nil, let c = TimelineCache.load(day) { data = c.0 }   // 받는 동안 저장본 먼저
         loading = true
         defer { loading = false }
         do {
-            data = try await API.timeline(key)
+            let raw = try await API.timelineData(day)
+            let t = try API.decode(TimelineDay.self, raw)
+            guard day == key else { return }
+            TimelineCache.save(day, raw)
+            data = t
             error = nil
-            fit((data?.items ?? []).flatMap { $0.isVisit ? ($0.center.map { [$0] } ?? []) : $0.coords })
+            offlineAt = nil
         } catch {
+            guard day == key else { return }
             self.error = error.localizedDescription
-            data = nil
+            if let c = TimelineCache.load(day) { data = c.0; offlineAt = c.1 } else { data = nil; offlineAt = nil }
         }
+        fit((data?.items ?? []).flatMap { $0.isVisit ? ($0.center.map { [$0] } ?? []) : $0.coords })
     }
 
     /// 주차 층 고침 (nil = 추정으로 되돌림) → 서버 반영 뒤 다시 불러옴
     private func setPark(_ pk: TimelinePark, _ level: Int?) async {
         await Parking.shared.setLevel(ts: pk.ts, level: level)
-        await load()
+        if Parking.shared.isPending(pk.ts) { toaster.show("연결되면 반영합니다") } else { await load() }
     }
 
     /// 머문 곳 층 구간 확정 (nil = 취소) → 그 장소 층 높이·공유기 층 학습
     private func setFloor(_ it: TimelineItem, _ ts: Double, _ dh: Double, _ ap: String?, _ level: Int?) async {
         guard let la = it.lat, let lo = it.lon else { return }
-        do {
-            let _: OKResponse = try await API.send("PUT", "floor", body: FloorFixBody(ts: ts, lat: la, lon: lo, dh: dh, level: level, ap: ap))
-        } catch { self.error = error.localizedDescription }
-        await load()
+        // 통신이 안 되면 기기에 쌓아 두고 연결되면 보냄 (주차 고침과 같음)
+        if await FloorFixes.shared.add(FloorFixBody(ts: ts, lat: la, lon: lo, dh: dh, level: level, ap: ap)) {
+            await load()
+        } else {
+            toaster.show("연결되면 반영합니다")
+        }
     }
 
     private func fit(_ cs: [CLLocationCoordinate2D]) {

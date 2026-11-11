@@ -39,6 +39,14 @@ enum API {
 
     static func send<T: Decodable>(_ method: String, _ path: String, body: (any Encodable)? = nil,
                                    cellular: Bool = true) async throws -> T {
+        try decoder.decode(T.self, from: try await raw(method, path, body: body, cellular: cellular))
+    }
+
+    static func decode<T: Decodable>(_ t: T.Type, _ data: Data) throws -> T { try decoder.decode(t, from: data) }
+
+    /// 응답 본문 그대로 (타임라인처럼 기기에 저장해 두고 오프라인에 다시 보여 줄 때)
+    static func raw(_ method: String, _ path: String, body: (any Encodable)? = nil, cellular: Bool = true,
+                    timeout: TimeInterval = 20) async throws -> Data {
         let s = AppSettings.shared
         let base = s.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: base.hasSuffix("/") ? base + path : base + "/" + path) else {
@@ -46,7 +54,7 @@ enum API {
         }
         var req = URLRequest(url: url)
         req.httpMethod = method
-        req.timeoutInterval = 20
+        req.timeoutInterval = timeout
         req.allowsCellularAccess = cellular
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if !s.token.isEmpty {
@@ -62,7 +70,7 @@ enum API {
             let detail = obj?["detail"] as? String
             throw APIError(message: "서버 오류 \(http.statusCode)" + (detail.map { ": \($0)" } ?? ""))
         }
-        return try decoder.decode(T.self, from: data)
+        return data
     }
 
     static func tracks() async throws -> [ServerTrack] { try await send("GET", "tracks") }
@@ -77,6 +85,8 @@ enum API {
     static func day(_ date: String) async throws -> ServerDayDetail { try await send("GET", "day/\(date)") }
     static func deleteDay(_ date: String) async throws { let _: OKResponse = try await send("DELETE", "day/\(date)") }
     static func timeline(_ date: String) async throws -> TimelineDay { try await send("GET", "day/\(date)/timeline") }
+    /// 타임라인 원본 (10초 — 서버가 안 받으면 빨리 기기 저장본으로)
+    static func timelineData(_ date: String) async throws -> Data { try await raw("GET", "day/\(date)/timeline", timeout: 10) }
     // 자동 체크인
     static func acPlaces() async throws -> [ACPlace] { try await send("GET", "autocheckin/places?all=1") }
     static func acPatch(_ venueId: String, _ body: ACPlacePatch) async throws -> ACPlace {

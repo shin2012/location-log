@@ -133,6 +133,9 @@ final class Parking: ObservableObject {
         await flush(force: true)
     }
 
+    /// 고친 층이 아직 서버에 안 갔음 (통신 안 됨)
+    func isPending(_ ts: Double) -> Bool { patches[String(Int(ts.rounded()))] != nil }
+
     // MARK: 서버
 
     struct PatchBody: Encodable { let level: Int? }

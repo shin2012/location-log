@@ -107,7 +107,7 @@ struct TimelineSub: Decodable, Hashable, Identifiable {
     var id: String { "\(kind)-\(Int(start))" }
 }
 
-struct FloorFixBody: Encodable {
+struct FloorFixBody: Codable {
     let ts: Double
     let lat: Double
     let lon: Double

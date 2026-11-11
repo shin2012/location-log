@@ -160,7 +160,15 @@ struct AppMap: View {
     @Environment(\.colorScheme) private var scheme
 
     private var anchor: CLLocationCoordinate2D? {
-        fit?.coords.first ?? lines.first?.coords.first ?? pins.first?.coord ?? circles.first?.center ?? user
+        fit?.coords.first ?? lines.first?.coords.first ?? pins.first?.coord ?? circles.first?.center ?? me
+    }
+
+    /// 따라갈 내 위치: 받은 위치 → 없으면 iOS 가 기억하는 마지막 위치 (권한 있으면 바로 있음 — 첫 화면이 지도 기본 위치에 머물지 않게)
+    private var me: CLLocationCoordinate2D? { user ?? (showsUser || follow != nil ? AppMap.lastKnown : nil) }
+
+    static var lastKnown: CLLocationCoordinate2D? {
+        guard let l = CLLocationManager().location, l.horizontalAccuracy >= 0 else { return nil }
+        return l.coordinate
     }
 
     var body: some View {
@@ -168,12 +176,12 @@ struct AppMap: View {
         #if canImport(NMapsMap)
         case .naver:
             NaverMapRep(dark: scheme == .dark, lines: lines, pins: pins, circles: circles, fit: fit, showsUser: showsUser,
-                        follow: follow, onTapPin: onTapPin)
+                        follow: follow, user: me, onTapPin: onTapPin)
         #endif
         #if canImport(GoogleMaps)
         case .google:
             GoogleMapRep(dark: scheme == .dark, lines: lines, pins: pins, circles: circles, fit: fit, showsUser: showsUser,
-                         follow: follow, user: user, onTapPin: onTapPin)
+                         follow: follow, user: me, onTapPin: onTapPin)
         #endif
         default:
             AppleMapRep(lines: lines, pins: pins, circles: circles, fit: fit, showsUser: showsUser,
@@ -252,6 +260,7 @@ private struct NaverMapRep: UIViewRepresentable {
     let fit: MapFit?
     let showsUser: Bool
     let follow: Binding<Bool>?
+    let user: CLLocationCoordinate2D?
     let onTapPin: ((String) -> Void)?
 
     func makeCoordinator() -> Coord { Coord() }
@@ -313,6 +322,9 @@ private struct NaverMapRep: UIViewRepresentable {
             c.overlays.append(m)
         }
         let followOn = follow?.wrappedValue == true
+        // 따라가기: SDK 위치 추적은 첫 화면(크기 0)에 카메라를 안 옮겨 기본 위치(네이버 본사)에 남음 → 내 위치로 직접 옮김
+        if followOn, let u = user, !c.centered { c.center(v, u) }
+        if !followOn { c.centered = false }
         if showsUser || followOn {
             if followOn { if v.positionMode != .direction { v.positionMode = .direction } }
             else if v.positionMode == .disabled || v.positionMode == .direction { v.positionMode = .normal }
@@ -330,6 +342,20 @@ private struct NaverMapRep: UIViewRepresentable {
         var fitKey: String?
         var follow: Binding<Bool>?
         var userMoved = false
+        var centered = false
+
+        /// 내 위치로 카메라 (크기·window 잡힐 때까지 50ms 간격 재시도)
+        func center(_ v: NMFMapView, _ u: CLLocationCoordinate2D, tries: Int = 0) {
+            centered = true
+            let upd = NMFCameraUpdate(scrollTo: NMGLatLng(lat: u.latitude, lng: u.longitude), zoomTo: 16)
+            upd.animation = .none
+            v.moveCamera(upd)
+            guard !MapFit.ready(v), tries < 60 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak v] in
+                guard let self, let v, self.follow?.wrappedValue == true, !self.userMoved else { return }
+                self.center(v, u, tries: tries + 1)
+            }
+        }
 
         /// 화면 맞춤. 처음 updateUIView 때는 지도 뷰 크기가 0이라 fit(bounds) 가 먹지 않고
         /// 카메라가 SDK 기본 위치(네이버 본사·분당)에 남음 → 가운데만 먼저 옮기고, 크기가 잡히면 다시 맞춤.
