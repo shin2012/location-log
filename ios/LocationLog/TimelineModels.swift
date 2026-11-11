@@ -35,7 +35,7 @@ struct TimelineItem: Decodable, Identifiable, Hashable {
     let path: [[Double]]?
     let park: TimelinePark?     // 운전 끝 주차 층
     let floors: [TimelineFloor]?   // 머문 곳 안 층 구간 (층 이동이 있을 때만)
-    let subs: [TimelineSub]?       // 층 구간이 없을 때 머문 곳 바로 아래 하위 항목 (폰 두고 이동 등)
+    let subs: [TimelineSub]?       // 층 구간이 없을 때 머문 곳 바로 아래 하위 항목 (워치 계단 층)
 
     var id: String { "\(kind)-\(Int(start))" }
     var isVisit: Bool { kind == "visit" }
@@ -80,7 +80,7 @@ struct TimelineFloor: Decodable, Hashable, Identifiable {
     let via: String?            // elevator | stairs | escalator
     let dh: Double
     let ap: String?
-    let subs: [TimelineSub]?    // 이 층(폰으로 확인)에 폰을 두고 워치로 다녀온 것 — 시간순
+    let subs: [TimelineSub]?    // 이 층(폰으로 확인)에 폰을 두고 워치 계단으로 다녀온 층 — 시간순
     var id: Double { start }
 
     var viaLabel: String? {
@@ -93,8 +93,8 @@ struct TimelineFloor: Decodable, Hashable, Identifiable {
     }
 }
 
-/// 폰으로 확인된 항목 아래 작은 글씨 하위 항목 (서버 floors.attach_away / segments.subs)
-/// kind: away = 폰 두고 이동(워치 걸음) · floor = 워치 계단으로 오른 층 · back = 폰 있는 층으로 돌아옴
+/// 폰으로 확인된 항목 아래 작은 글씨 하위 항목 (서버 floors.segments subs)
+/// kind: floor = 폰 두고 워치 계단으로 오른 층 · back = 폰 있는 층으로 돌아옴
 struct TimelineSub: Decodable, Hashable, Identifiable {
     let kind: String
     let start: Double

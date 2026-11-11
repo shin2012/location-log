@@ -121,14 +121,12 @@ def test_watch_excursion_real():
         {"kind": "flights", "device": "phone", "start": U("15:00"), "end": U("15:01"), "value": 1},  # 폰 기록은 무시
     ]
     segs = F.segments(v, hs, steps, [], base_dh=0.44, hk=hk)
-    rest = F.attach_away(segs, F.away(v, steps, hk))
     hm = lambda t: (t + timedelta(hours=9)).strftime("%H:%M")
-    # 폰으로 확인된 층은 1F·2F 그대로, 3F 다녀온 건 2F 아래 하위 항목 (시간순: 폰 두고 이동 → 3F → 돌아옴)
+    # 폰으로 확인된 층은 1F·2F 그대로, 워치 계단으로 다녀온 3F 는 2F 아래 하위 항목 (시간순: 3F → 돌아옴)
     assert [(g["label"], hm(g["start"])) for g in segs] == [("1F", "13:59"), ("2F", "14:02")], segs
-    assert rest == []
     subs = [(x["kind"], hm(x["start"]), x.get("label")) for x in segs[1]["subs"]]
-    assert subs == [("away", "14:30", None), ("floor", "14:31", "3F"), ("back", "14:49", "2F")], subs
-    assert segs[1]["subs"][0]["steps"] >= 120 and segs[0]["subs"] == []
+    assert subs == [("floor", "14:31", "3F"), ("back", "14:49", "2F")], subs
+    assert segs[0]["subs"] == []
     # 폰도 같이 움직였으면(폰 걸음 있음) 워치 층은 안 씀 — 기압이 맡음
     steps2 = steps + [{"ts": U("14:31"), "steps": 40}]
     assert all(not g["subs"] for g in F.segments(v, hs, steps2, [], base_dh=0.44, hk=hk))
@@ -147,18 +145,13 @@ def test_watch_only_no_baro_event():
     assert F.segments(V, hs, [], cal, hk=hk)[0]["subs"][0]["label"] == "4F"
 
 
-def test_away_real_chunks():
-    """실측 2026-11-11: 워치 걸음은 최대 10분 덩어리. 분 단위로 나눴을 땐 카페·호텔 등 7곳에서 '폰 두고'로 잘못 잡힘"""
+def test_watch_real_day():
+    """실측 2026-11-11 하루 워치 기록: 워치 계단(07:54·10:28·12:32)은 모두 폰도 같이 움직임 → 워치 층 없음"""
     d = json.loads((Path(__file__).parent / "data" / "watch_20261111.json").read_text())
     steps = [{"ts": datetime.fromisoformat(t), "steps": n} for t, n in d["steps"]]
     hk = [{"kind": k, "start": datetime.fromisoformat(a), "end": datetime.fromisoformat(b), "value": v, "device": dv}
           for k, a, b, v, dv in d["hk"]]
     day = {"start": datetime(2026, 11, 10, 15), "end": datetime(2026, 11, 11, 9), "lat": 37.5, "lon": 127.0}
-    hm = lambda t: (t + timedelta(hours=9)).strftime("%H:%M")
-    got = [(hm(a["start"]), hm(a["end"])) for a in F.away(day, steps, hk)]
-    # 집 아침(폰 충전 중, 실제로 폰 정지) + 영업처(폰 2층에 둠) 만
-    assert got == [("07:22", "07:49"), ("14:16", "15:30")], got
-    # 워치 계단(07:54·10:28·12:32)은 모두 폰도 같이 움직임 → 워치 층 구간 없음
     assert F.excursions(day, steps, hk, []) == []
 
 

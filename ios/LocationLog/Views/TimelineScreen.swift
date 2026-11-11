@@ -323,7 +323,7 @@ struct FloorRow: View {
     }
 }
 
-/// 폰으로 확인된 항목 아래 작은 글씨 하위 항목 (시간순)
+/// 폰으로 확인된 층/머문 곳 아래 작은 글씨 하위 항목 (시간순): 워치 계단으로 다녀온 층 · 돌아옴
 struct SubRow: View {
     let sub: TimelineSub
     var indent: CGFloat = 40
@@ -331,7 +331,7 @@ struct SubRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: sub.kind == "back" ? "arrow.uturn.backward" : sub.kind == "floor" ? "figure.stairs" : "applewatch")
+            Image(systemName: sub.kind == "back" ? "arrow.uturn.backward" : "figure.stairs")
                 .frame(width: 16)
             Text(text).monospacedDigit()
             Spacer(minLength: 0)
@@ -348,8 +348,6 @@ struct SubRow: View {
 
     private var text: String {
         switch sub.kind {
-        case "away":
-            return Fmt.hm(sub.start) + "–" + Fmt.hm(sub.end) + " 폰 두고 이동" + (sub.steps.map { " · 워치 \($0.formatted())걸음" } ?? "")
         case "floor":
             return Fmt.hm(sub.start) + "–" + Fmt.hm(sub.end) + " 워치 계단으로 " + (sub.label ?? "") + " 다녀옴"
         case "back":
