@@ -83,3 +83,12 @@ CREATE TABLE IF NOT EXISTS checkin_snap (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='스웜 체크인 사본';
 
 ALTER TABLE day_hk ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL COMMENT '건강 앱에서 지워짐 (사본은 남겨 계속 씀)';
+
+-- 1.9.0: 앱이 계산한 날짜별 타임라인 결과 (서버는 계산 안 함 — 보관·전달만)
+CREATE TABLE IF NOT EXISTS day_result (
+  date        DATE NOT NULL COMMENT '한국 날짜',
+  json        MEDIUMTEXT NOT NULL,
+  device      VARCHAR(40) NOT NULL DEFAULT '',
+  computed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='앱 계산 타임라인 결과';

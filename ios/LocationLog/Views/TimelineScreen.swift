@@ -70,7 +70,9 @@ struct TimelineScreen: View {
         List {
             if let at = offlineAt {
                 Section {
-                    Label("서버에 연결하지 못해 \(Fmt.hm(at.timeIntervalSince1970 * 1000))에 받은 기록을 보여 줍니다. 기록은 기기에 쌓이고 연결되면 올라갑니다.",
+                    Label(at == .distantPast
+                          ? "서버에 연결하지 못해 기기 기록만으로 계산했습니다. 장소 이름 등은 연결되면 붙습니다."
+                          : "서버에 연결하지 못해 기기 기록과 \(Fmt.hm(at.timeIntervalSince1970 * 1000))에 받은 장소 이름 등으로 계산했습니다.",
                           systemImage: "wifi.slash")
                         .font(.footnote).foregroundStyle(.orange)
                 }
@@ -134,14 +136,11 @@ struct TimelineScreen: View {
         .listStyle(.insetGrouped)
     }
 
-    private var emptyTitle: String {
-        if settings.token.isEmpty { return "서버에 연결되어 있지 않습니다" }
-        return error == nil ? "이 날 기록이 없습니다" : "불러오지 못했습니다"
-    }
+    private var emptyTitle: String { "이 날 기록이 없습니다" }
 
     private var emptyDetail: String {
-        if settings.token.isEmpty { return "설정 › 서버에서 연결하면 머문 곳과 이동이 여기에 나옵니다." }
-        return error ?? "자동 기록이 켜져 있으면 머문 곳과 이동이 쌓입니다."
+        if settings.token.isEmpty { return "자동 기록이 켜져 있으면 이 기기 기록으로 머문 곳과 이동이 나옵니다. 설정 › 서버를 연결하면 장소 이름이 붙고 다른 기기에서도 볼 수 있습니다." }
+        return "자동 기록이 켜져 있으면 머문 곳과 이동이 쌓입니다."
     }
 
     private func stat(_ v: String, _ label: String) -> some View {
@@ -224,45 +223,47 @@ struct TimelineScreen: View {
 
     // MARK: 불러오기
 
-    /// 서버에서 받아 기기에 저장. 못 받으면(인터넷 없음·서버 안 됨) 마지막 저장본을 보여 주고 위에 알림
+    /// 기기에서 바로 계산(오프라인이어도) → 연결되면 서버 보완 정보(장소 이름·보정값 등) 받아 다시 계산하고 결과를 서버에 보관
     private func load() async {
         selected = nil
-        guard !settings.token.isEmpty else { data = nil; return }
         let day = key
-        if data == nil, let c = TimelineCache.load(day) { data = c.0 }   // 받는 동안 저장본 먼저
+        show(day)
+        guard !settings.token.isEmpty else { offlineAt = nil; return }
         loading = true
         defer { loading = false }
         do {
-            let raw = try await API.timelineData(day)
-            let t = try API.decode(TimelineDay.self, raw)
+            try await LocalTimeline.refresh(day)
             guard day == key else { return }
-            TimelineCache.save(day, raw)
-            data = t
-            error = nil
+            show(day)
             offlineAt = nil
+            error = nil
+            await LocalTimeline.upload(day)
         } catch {
             guard day == key else { return }
+            offlineAt = LocalTimeline.serverCache(day)?.1 ?? .distantPast
             self.error = error.localizedDescription
-            if let c = TimelineCache.load(day) { data = c.0; offlineAt = c.1 } else { data = nil; offlineAt = nil }
         }
+    }
+
+    private func show(_ day: String) {
+        guard day == key else { return }
+        data = LocalTimeline.compute(day)?.0
         fit((data?.items ?? []).flatMap { $0.isVisit ? ($0.center.map { [$0] } ?? []) : $0.coords })
     }
 
-    /// 주차 층 고침 (nil = 추정으로 되돌림) → 서버 반영 뒤 다시 불러옴
+    /// 주차 층 고침 (nil = 추정으로 되돌림): 기기에 먼저 반영해 바로 다시 계산, 서버는 연결되면
     private func setPark(_ pk: TimelinePark, _ level: Int?) async {
         await Parking.shared.setLevel(ts: pk.ts, level: level)
-        if Parking.shared.isPending(pk.ts) { toaster.show("연결되면 반영합니다") } else { await load() }
+        show(key)
+        if Parking.shared.isPending(pk.ts) { toaster.show("기기에 반영했습니다 · 서버는 연결되면") }
     }
 
-    /// 머문 곳 층 구간 확정 (nil = 취소) → 그 장소 층 높이·공유기 층 학습
+    /// 머문 곳 층 구간 고침 (nil = 취소) → 그 장소 층 높이·공유기 층 학습. 기기에 먼저 반영
     private func setFloor(_ it: TimelineItem, _ ts: Double, _ dh: Double, _ ap: String?, _ level: Int?) async {
         guard let la = it.lat, let lo = it.lon else { return }
-        // 통신이 안 되면 기기에 쌓아 두고 연결되면 보냄 (주차 고침과 같음)
-        if await FloorFixes.shared.add(FloorFixBody(ts: ts, lat: la, lon: lo, dh: dh, level: level, ap: ap)) {
-            await load()
-        } else {
-            toaster.show("연결되면 반영합니다")
-        }
+        let sent = await FloorFixes.shared.add(FloorFixBody(ts: ts, lat: la, lon: lo, dh: dh, level: level, ap: ap))
+        show(key)
+        if !sent { toaster.show("기기에 반영했습니다 · 서버는 연결되면") }
     }
 
     private func fit(_ cs: [CLLocationCoordinate2D]) {

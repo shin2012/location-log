@@ -31,6 +31,7 @@
 | `day_hk` | 건강 앱 기록: uuid(PK), kind(steps=워치 걸음만 / flights=오른 층수), start, end, value, device(watch/phone) (1.6.0) |
 | `car_event` | CarPlay 연결 사본: ts(UTC)+event(PK), lat, lng, src(app/fsq), fsq_id — 앱이 보낸 것 + 조회 때 swarm.FSQ_CarPlay 복사. 타임라인 운전은 이것만 봄 (1.8.0) |
 | `checkin_snap` | 스웜 체크인 사본: fsq_id(PK), ts, venue, lat, lon, changed_at, gone_at — 조회 때 원본과 비교해 고침, 원본에서 사라져도 남김 (1.8.0) |
+| `day_result` | 앱이 계산한 날짜별 타임라인 결과(json) — 서버는 보관·전달만 (1.9.0) |
 | `park` | 주차: ts(CarPlay 해제, PK), lat, lon, dh(지상 도로 대비 m), ref_ts, level_est, level_user(사용자 확정) — level 지상1층=0·지하1층=-1 |
 
 <details><summary>API (앱은 <code>/app-api/…</code> 로 부름 = <code>/api/…</code>, 모두 Bearer 토큰)</summary>
@@ -137,4 +138,11 @@ flowchart LR
 ## 원본 보관 (1.8.0) — 다른 앱에서 원본이 없어져도 타임라인이 안 바뀌게
 - 앱: `Archive.swift` `ArchiveLog<T>` = 종류별·날짜별 JSONL(Application Support/archive/<종류>/), **지우지 않음**. 받은 순간 먼저 보관 → 서버로는 줄 수 커서로(실패하면 이어서). 종류: act·step(iOS 동작·걸음, iOS는 7일만 보관)·health(워치, 지워짐은 표시만)·wifi·carplay·park·edit(사용자 고침). 기압 파일도 안 지움, 위치 점 '이 기기 보관' 기본 무제한. 1.8 첫 실행에 iOS 지난 7일·건강 앱 30일을 보관함에 다시 채움(`Archives.migrateOnce`).
 - 서버: 타임라인이 다른 앱 표를 직접 안 씀 — 운전 = `car_event`(조회 때 FSQ_CarPlay 새 것 복사, ±120초 같은 연결은 합침), 장소 이름 = `checkin_snap`(조회 때 원본과 비교해 바뀌면 고침, 사라지면 gone_at 만). 건강 앱 삭제는 `day_hk.deleted_at` 표시만.
+
+## 타임라인 = 앱에서 계산 (1.9.0)
+- 계산은 앱 `TimelineCalc.swift` 한 곳(순수 Foundation). 입력 `CalcInput` = 기기 보관함(`LocalTimeline.localInputs`) + 서버 보완 저장본(`GET /api/day/{date}/inputs?have=points,baro`, Application Support/inputs/, 지우지 않음) 합침 → 사용자 고침(edit 보관함) 마지막 반영. 오프라인이면 기기 것만으로 바로 계산.
+- 연결되면 보완 정보(체크인 사본·장소·주차/층 보정값·CarPlay 사본·다른 기기 원본) 받아 다시 계산 → `PUT /api/day/{date}/result` (바뀌었을 때만, 하루 기록 켠 기기만) → `day_result`. 백그라운드 업로드 때 오늘·어제 15분마다.
+- 서버 `timeline.py`·`floors.py` 는 **대조 기준으로만** 남김(옛 앱용 `/timeline`). 대조: `python3 tests/calc_golden.py` 가 inputs → 서버 결과, `tools/calctest` 가 Swift 결과와 비교 — 실제 7일(tests/data/calc) 전부 같음.
+  `swiftc -O ios/LocationLog/ParkModel.swift ios/LocationLog/TimelineCalc.swift tools/calctest/main.swift -o /tmp/ct && /tmp/ct tests/data/calc`
+- 데일리요섭은 건드리지 않음(그쪽이 원본 표를 읽어 자체 통합 — 티맵 등).
 

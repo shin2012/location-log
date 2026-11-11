@@ -28,19 +28,19 @@ enum ParkModel {
         return 2 * 6371008.8 * asin(min(1, h.squareRoot()))
     }
 
-    static func globalA(_ cal: [ParkCal]) -> Double {
+    static func globalA(_ cal: [ParkCal], defA d: Double = defA) -> Double {
         let r = cal.compactMap { c -> Double? in
             guard c.level != 0 else { return nil }
             let x = c.dh / Double(c.level)
             return x >= aMin && x <= aMax ? x : nil
         }.sorted()
-        guard !r.isEmpty else { return defA }
+        guard !r.isEmpty else { return d }
         let n = r.count
         return n % 2 == 1 ? r[n / 2] : (r[n / 2 - 1] + r[n / 2]) / 2
     }
 
-    static func model(lat: Double, lon: Double, cal: [ParkCal]) -> (a: Double, b: Double) {
-        let g = globalA(cal)
+    static func model(lat: Double, lon: Double, cal: [ParkCal], defA d: Double = defA) -> (a: Double, b: Double) {
+        let g = globalA(cal, defA: d)
         let near = cal.filter { dist(lat, lon, $0.lat, $0.lon) <= nearM }
         if near.isEmpty { return (g, 0) }
         if Set(near.map(\.level)).count >= 2 {

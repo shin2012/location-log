@@ -1,29 +1,5 @@
 import Foundation
 
-/// 타임라인 기기 저장본: 날짜별 서버 응답 원본 (Application Support/timeline/YYYY-MM-DD.json).
-/// 인터넷이 없거나 서버에 못 붙을 때 마지막으로 받은 타임라인을 보여 줌. 지우지 않음.
-@MainActor
-enum TimelineCache {
-    private static var dir: URL {
-        let d = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("timeline", isDirectory: true)
-        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
-        return d
-    }
-
-    static func save(_ day: String, _ data: Data) {
-        try? data.write(to: dir.appendingPathComponent("\(day).json"), options: .atomic)
-    }
-
-    /// (내용, 받은 시각)
-    static func load(_ day: String) -> (TimelineDay, Date)? {
-        let u = dir.appendingPathComponent("\(day).json")
-        guard let d = try? Data(contentsOf: u), let t = try? API.decode(TimelineDay.self, d) else { return nil }
-        let at = (try? FileManager.default.attributesOfItem(atPath: u.path)[.modificationDate] as? Date) ?? Date()
-        return (t, at)
-    }
-}
-
 /// 층 고침 보낼 목록: 통신이 안 되면 쌓아 두었다가 다음 업로드 때 (주차 고침과 같은 방식)
 @MainActor
 final class FloorFixes {
@@ -39,7 +15,8 @@ final class FloorFixes {
     /// 넣고 바로 보내 봄. 보냈으면 true
     @discardableResult
     func add(_ f: FloorFixBody) async -> Bool {
-        Archives.edits.append([EditRecord(at: (Date().timeIntervalSince1970 * 1000).rounded(), kind: "floor", ts: f.ts, level: f.level)])
+        Archives.edits.append([EditRecord(at: (Date().timeIntervalSince1970 * 1000).rounded(), kind: "floor", ts: f.ts, level: f.level,
+                                          lat: f.lat, lon: f.lon, dh: f.dh, ap: f.ap)])
         Archives.edits.markAllUploaded()
         pending.removeAll { abs($0.ts - f.ts) < 2 }
         pending.append(f)

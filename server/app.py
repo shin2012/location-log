@@ -434,6 +434,94 @@ def day_timeline(date: str):
     return {"date": date, **out}
 
 
+# ─── 앱 계산용 (1.9.0): 타임라인은 앱(TimelineCalc.swift)이 계산. 서버는 재료·보완 정보를 주고 결과를 보관 ───
+INPUT_KINDS = ("visits", "points", "acts", "steps", "baro", "wifi", "hk")
+
+
+def _ms(d):
+    return dt_to_ms(d)
+
+
+def day_inputs(cur, date: str, have: set[str] = frozenset()) -> dict:
+    """앱 TimelineCalc 입력(CalcInput)과 같은 모양. have = 기기에 이미 있는 원본 종류 → 빼고 보냄 (보완 정보는 늘 보냄)"""
+    a, b = day_range(date)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    out: dict = {"day0": _ms(a), "day1": _ms(b), "now": _ms(now)}
+    if "visits" not in have:
+        cur.execute("SELECT arrive, depart, lat, lon FROM day_visit WHERE arrive < %s AND (depart IS NULL OR depart > %s) ORDER BY arrive",
+                    (b, a - timedelta(hours=12)))
+        out["visits"] = [{"arrive": _ms(r["arrive"]), "depart": _ms(r["depart"]), "lat": r["lat"], "lon": r["lon"]} for r in cur.fetchall()]
+    if "points" not in have:
+        cur.execute("SELECT ts, lat, lon, src, act FROM day_pt WHERE ts >= %s AND ts < %s AND src IN ('gps','fill','trk','imu') ORDER BY ts", (a, b))
+        out["points"] = [{**r, "ts": _ms(r["ts"])} for r in cur.fetchall()]
+    if "acts" not in have:
+        cur.execute("(SELECT ts, act FROM day_act WHERE ts < %s ORDER BY ts DESC LIMIT 1) UNION ALL "
+                    "(SELECT ts, act FROM day_act WHERE ts >= %s AND ts < %s) ORDER BY ts", (a, a, b))
+        out["acts"] = [{**r, "ts": _ms(r["ts"])} for r in cur.fetchall()]
+    if "steps" not in have:
+        cur.execute("SELECT ts, steps, floors_up AS up, floors_down AS down FROM day_step WHERE ts >= %s AND ts < %s ORDER BY ts", (a, b))
+        out["steps"] = [{**r, "ts": _ms(r["ts"])} for r in cur.fetchall()]
+    if "baro" not in have:
+        cur.execute("SELECT ts, kpa FROM day_baro WHERE ts >= %s AND ts < %s ORDER BY ts", (a - timedelta(hours=1), b))
+        out["baro"] = [{**r, "ts": _ms(r["ts"])} for r in cur.fetchall()]
+    if "wifi" not in have:
+        cur.execute("(SELECT ts, bssid FROM day_wifi WHERE ts < %s ORDER BY ts DESC LIMIT 1) UNION ALL "
+                    "(SELECT ts, bssid FROM day_wifi WHERE ts >= %s AND ts < %s) ORDER BY ts", (a, a, b))
+        out["wifi"] = [{**r, "ts": _ms(r["ts"])} for r in cur.fetchall()]
+    if "hk" not in have:
+        cur.execute("SELECT uuid, kind, start, end, value, device FROM day_hk WHERE end >= %s AND start < %s ORDER BY start", (a, b))
+        out["hk"] = [{**r, "start": _ms(r["start"]), "end": _ms(r["end"])} for r in cur.fetchall()]
+    # 보완 정보 (서버에만 있거나 다른 경로로 들어온 것)
+    _sync_carplay(cur, a - timedelta(hours=6), b)
+    cur.execute("SELECT ts, event FROM car_event WHERE ts >= %s AND ts < %s ORDER BY ts", (a - timedelta(hours=6), b))
+    out["car"] = [{**r, "ts": _ms(r["ts"])} for r in cur.fetchall()]
+    cur.execute("SELECT name, lat, lon, radius FROM auto_place")
+    out["places"] = [{**r, "radius": float(r["radius"])} for r in cur.fetchall()]
+    out["checkins"] = [{**c, "ts": _ms(c["ts"])} for c in _checkins(cur, a - timedelta(hours=12), b)]
+    cur.execute("SELECT ts, lat, lon, dh, level_est, level_user FROM park WHERE ts >= %s AND ts < %s ORDER BY ts",
+                (a - timedelta(hours=1), b + timedelta(hours=1)))
+    out["parks"] = [{**r, "ts": _ms(r["ts"])} for r in cur.fetchall()]
+    out["park_cal"] = [{"lat": c["lat"], "lon": c["lon"], "dh": c["dh"], "level": c["level"]} for c in _park_cal(cur)]
+    cur.execute("SELECT ts, lat, lon, dh, level, ap FROM floor_cal")
+    out["floor_cal"] = [{**r, "ts": _ms(r["ts"])} for r in cur.fetchall()]
+    return out
+
+
+@app.get("/api/day/{date}/inputs")
+def day_inputs_api(date: str, have: str = ""):
+    """앱이 타임라인을 계산할 재료. have=points,acts,... 기기에 있는 원본 종류는 뺌"""
+    hv = {x for x in have.split(",") if x in INPUT_KINDS}
+    with db() as cur:
+        return day_inputs(cur, date, hv)
+
+
+class ResultIn(BaseModel):
+    result: dict
+    device: str = Field(default="", max_length=40)
+
+
+@app.put("/api/day/{date}/result")
+def day_result_put(date: str, body: ResultIn):
+    """앱이 계산한 그날 타임라인 보관 (아이패드·다른 서비스가 가져다 씀)"""
+    day_range(date)
+    js = json.dumps(body.result, ensure_ascii=False, separators=(",", ":"))
+    with db() as cur:
+        cur.execute("INSERT INTO day_result (date, json, device) VALUES (%s,%s,%s) "
+                    "ON DUPLICATE KEY UPDATE json=VALUES(json), device=VALUES(device), computed_at=NOW()",
+                    (date, js, body.device))
+    return {"ok": True}
+
+
+@app.get("/api/day/{date}/result")
+def day_result_get(date: str):
+    with db() as cur:
+        cur.execute("SELECT json, device, computed_at FROM day_result WHERE date=%s", (date,))
+        r = cur.fetchone()
+    if not r:
+        raise HTTPException(404, "결과 없음")
+    return {**json.loads(r["json"]), "device": r["device"], "computed_at": dt_to_ms(r["computed_at"])}
+
+
 @app.get("/api/day/{date}")
 def day_get(date: str):
     a, b = day_range(date)

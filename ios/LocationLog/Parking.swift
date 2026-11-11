@@ -25,6 +25,8 @@ final class Parking: ObservableObject {
     private var posts: [Post] = []
     private var patches: [String: Int] = [:]   // ts ms(문자열) → 층, -99 = 고친 것 취소
     private var cal: [ParkCal] = []
+    /// 확정한 주차 (서버에서 받은 것 + 기기에서 고친 것) — 타임라인 계산용
+    var calibration: [ParkCal] { cal }
     private var calAt = Date.distantPast
     private var sending = false
 

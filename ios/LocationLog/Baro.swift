@@ -110,7 +110,8 @@ final class Baro: ObservableObject {
         UserDefaults.standard.set(uploaded, forKey: Self.uploadedKey)
     }
 
-    private func samples(_ day: String) -> [BaroSample] {
+    /// 그날(기기 시간대) 저장한 기압 — 타임라인 계산·업로드
+    func samples(_ day: String) -> [BaroSample] {
         guard let d = try? Data(contentsOf: file(day)) else { return [] }
         let dec = JSONDecoder()
         return d.split(separator: 0x0A).compactMap { try? dec.decode(BaroSample.self, from: Data($0)) }

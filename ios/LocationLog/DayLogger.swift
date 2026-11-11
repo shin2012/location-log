@@ -530,6 +530,7 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
         await HealthHistory.shared.upload(wifiOnly: p.wifiOnly)
         await Parking.shared.flush()
         await FloorFixes.shared.flush()
+        await LocalTimeline.backgroundSync()
     }
 
     private var gpsDay = ""

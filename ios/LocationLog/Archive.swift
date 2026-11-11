@@ -102,6 +102,10 @@ struct EditRecord: Codable {
     let kind: String        // park | floor
     let ts: Double          // 대상(주차·층 구간) 시각
     let level: Int?         // nil = 고친 것 취소
+    var lat: Double? = nil  // 층 구간: 장소·높이 (기기에서 바로 다시 계산하려고)
+    var lon: Double? = nil
+    var dh: Double? = nil
+    var ap: String? = nil
 }
 
 @MainActor
