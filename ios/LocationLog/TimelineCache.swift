@@ -2,6 +2,7 @@ import Foundation
 
 /// 타임라인 기기 저장본: 날짜별 서버 응답 원본 (Application Support/timeline/YYYY-MM-DD.json).
 /// 인터넷이 없거나 서버에 못 붙을 때 마지막으로 받은 타임라인을 보여 줌. 60일 지난 건 지움.
+@MainActor
 enum TimelineCache {
     private static var dir: URL {
         let d = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
