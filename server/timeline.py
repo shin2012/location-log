@@ -155,13 +155,17 @@ def build_items(day0: datetime, day1: datetime, visits_raw: list[dict], pts: lis
             pk = [k for k in parks or [] if v["start"] - PARK_AFTER <= k["ts"] <= v["start"] + timedelta(minutes=5)
                   and k.get("dh") is not None]
             base = pk[-1]["dh"] if pk else 0.0
-            segs = floors.segments(dict(v, start=s, end=e), hs, steps, floor_cal or [], wifi, base_dh=base, hk=hk)
-            if segs:
+            vv = dict(v, start=s, end=e)
+            segs = floors.segments(vv, hs, steps, floor_cal or [], wifi, base_dh=base, hk=hk)
+            aw = floors.away(vv, steps, hk) if hk else []
+            if aw and not segs:   # 층 이동 없는 머묾: 머문 곳 전체를 한 구간으로 보고 그 아래에
+                segs = [{"start": s, "end": e, "subs": []}]
+            rest = floors.attach_away(segs, aw)
+            if len(segs) > 1:
                 it["floors"] = segs
-        if hk:
-            aw = floors.away(dict(v, start=s, end=e), steps, hk)
-            if aw:
-                it["away"] = aw
+            subs = (segs[0]["subs"] if len(segs) == 1 else []) + rest
+            if subs:
+                it["subs"] = sorted(subs, key=lambda x: x["start"])
         items.append(it)
     # 운전 = CarPlay 연결 구간
     sessions, on = [], None

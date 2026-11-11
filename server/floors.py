@@ -115,52 +115,54 @@ def wifi_at(wifi: list[dict], a: datetime, b: datetime) -> str | None:
 
 WATCH_FLOOR_M = 3.0      # 워치 '오른 층' 1 = 약 3m
 PHONE_STILL = 5          # 1분 폰 걸음이 이보다 적으면 폰은 놓여 있음
-WATCH_WALK = 10          # 1분 워치 걸음이 이 이상이면 걷는 중
+WATCH_WALK = 10          # 워치 걸음 덩어리가 이 이상이면 걸은 것
+AWAY_CHUNK = 30          # 폰 두고 이동으로 볼 워치 걸음 덩어리 최소
 
 
 def _minute(t: datetime) -> datetime:
     return t.replace(second=0, microsecond=0)
 
 
-def watch_minutes(hk: list[dict]) -> dict[datetime, float]:
-    """워치 걸음 기록(구간 단위)을 1분 단위로 고르게 나눔"""
-    out: dict[datetime, float] = {}
-    for x in hk:
-        if x["kind"] != "steps" or x.get("device") != "watch":
-            continue
-        a, b = x["start"], max(x["end"], x["start"] + timedelta(seconds=1))
-        span = (b - a).total_seconds()
-        m = _minute(a)
-        while m < b:
-            ov = (min(b, m + timedelta(minutes=1)) - max(a, m)).total_seconds()
-            if ov > 0:
-                out[m] = out.get(m, 0) + x["value"] * ov / span
-            m += timedelta(minutes=1)
-    return out
+def _watch_chunks(hk: list[dict]) -> list[dict]:
+    return sorted((x for x in hk if x["kind"] == "steps" and x.get("device") == "watch"), key=lambda x: x["start"])
+
+
+def _phone_sum(ph: dict, a: datetime, b: datetime) -> int:
+    m, n = _minute(a), 0
+    while m < b:
+        n += ph.get(m, 0)
+        m += timedelta(minutes=1)
+    return n
 
 
 def away(v: dict, steps: list[dict], hk: list[dict]) -> list[dict]:
-    """폰은 놓여 있는데 워치로 걸은 구간 (30분 안 끊김은 하나로 — 가서 얘기하고 돌아온 것, 50걸음 이상) [{start, end, steps}]"""
+    """폰은 놓여 있는데 워치로 걸은 구간 [{start, end, steps}].
+    워치 걸음은 건강 앱에 최대 10분 덩어리로 들어옴 → 분 단위로 나누지 않고 덩어리마다 같은 구간 폰 걸음과 비교
+    (나누면 폰 들고 1~2분 걸은 덩어리의 나머지 분이 '폰 두고'로 잘못 잡힘 — 2026-11-11 실측 7건 중 5건).
+    워치 30걸음 이상 + 폰 걸음이 워치의 20% 미만인 덩어리, 30분 안 끊김은 하나로, 합 50걸음 이상."""
     ph = {s["ts"]: s["steps"] for s in steps}
-    wm = watch_minutes(hk)
-    mins = sorted(m for m, n in wm.items() if n >= WATCH_WALK and ph.get(m, 0) < PHONE_STILL and v["start"] <= m < v["end"])
     out: list[dict] = []
-    for m in mins:
-        if out and m - out[-1]["end"] <= timedelta(minutes=30):
-            out[-1]["end"] = m + timedelta(minutes=1)
+    for x in _watch_chunks(hk):
+        if not (v["start"] <= x["start"] < v["end"]) or x["value"] < AWAY_CHUNK:
+            continue
+        if _phone_sum(ph, x["start"], x["end"]) >= x["value"] * 0.2:
+            continue
+        if out and x["start"] - out[-1]["end"] <= timedelta(minutes=30):
+            out[-1]["end"] = max(out[-1]["end"], x["end"])
+            out[-1]["steps"] += x["value"]
         else:
-            out.append({"start": m, "end": m + timedelta(minutes=1)})
+            out.append({"start": x["start"], "end": x["end"], "steps": x["value"]})
     for o in out:
-        o["steps"] = round(sum(n for k, n in wm.items() if o["start"] <= k < o["end"]))
+        o["steps"] = round(o["steps"])
     return [o for o in out if o["steps"] >= 50]
 
 
 def excursions(v: dict, steps: list[dict], hk: list[dict], evs: list[dict]) -> list[dict]:
     """폰을 두고 워치로 계단을 오른 구간 [{start, end, floors}].
     워치 '오른 층수'(내린 층은 건강 앱에 없음) + 그 시각 폰 걸음 없음 + 기압 층 이동과 안 겹침.
-    돌아온 시각 = 오른 뒤 멈췄다가(1분 넘게 걸음 < 5) 다시 걷기 시작한 때. 못 찾으면 폰이 움직인 때·머문 곳 끝."""
+    돌아온 시각 = 오른 뒤 2분 넘게 지나 시작된 다음 워치 걸음 덩어리(10걸음+). 없으면 폰이 움직인 때·머문 곳 끝."""
     ph = {s["ts"]: s["steps"] for s in steps}
-    wm = watch_minutes(hk)
+    chunks = _watch_chunks(hk)
     fl = sorted((x for x in hk if x["kind"] == "flights" and x.get("device") == "watch"
                  and v["start"] <= x["start"] < v["end"] and x["value"] >= 1), key=lambda x: x["start"])
     out: list[dict] = []
@@ -168,25 +170,14 @@ def excursions(v: dict, steps: list[dict], hk: list[dict], evs: list[dict]) -> l
         if out and f["start"] < out[-1]["end"]:
             out[-1]["floors"] += f["value"]          # 돌아오기 전에 더 오름
             continue
-        m0, m1 = _minute(f["start"]) - timedelta(minutes=1), _minute(f["end"]) + timedelta(minutes=1)
-        if any(ph.get(m0 + timedelta(minutes=k), 0) >= PHONE_STILL for k in range(int((m1 - m0).total_seconds() // 60) + 1)):
+        if _phone_sum(ph, f["start"] - timedelta(minutes=1), f["end"] + timedelta(minutes=1)) >= PHONE_STILL:
             continue                                  # 폰도 같이 움직임 → 기압이 맡음
         if any(e["start"] - timedelta(minutes=1) <= f["end"] and f["start"] <= e["end"] + timedelta(minutes=1) for e in evs):
             continue
-        end, paused = None, False
-        m = _minute(f["end"]) + timedelta(minutes=1)
-        while m < v["end"]:
-            if ph.get(m, 0) >= PHONE_STILL:          # 폰이 움직임 = 이미 폰 있는 곳에 돌아와 있음
-                end = m
-                break
-            w = wm.get(m, 0)
-            if w < 5:
-                paused = True
-            elif paused and w >= WATCH_WALK:
-                end = m
-                break
-            m += timedelta(minutes=1)
-        out.append({"start": f["end"], "end": min(end or v["end"], v["end"]), "floors": f["value"]})
+        ret = next((c["start"] for c in chunks if c["start"] >= f["end"] + timedelta(minutes=2) and c["value"] >= WATCH_WALK), None)
+        moved = next((m for m in sorted(ph) if m > f["end"] and ph[m] >= PHONE_STILL), None)
+        end = min(t for t in (ret, moved, v["end"]) if t is not None)
+        out.append({"start": f["end"], "end": end, "floors": f["value"]})
     return out
 
 
@@ -210,8 +201,8 @@ def level_of(dh: float, lat: float, lon: float, near: list[dict]) -> int:
 
 def segments(v: dict, hs: list[tuple[datetime, float]], steps: list[dict], cal: list[dict],
              wifi: list[dict] | None = None, base_dh: float = 0.0, hk: list[dict] | None = None) -> list[dict]:
-    """머문 곳 v {start, end, lat, lon} 의 층 구간. 층 이동이 없으면 [].
-    cal: 사용자가 확정한 층 [{ts, lat, lon, dh, level, ap}]"""
+    """머문 곳 v {start, end, lat, lon} 의 폰으로 확인된 층 구간 (각각 subs = 폰 두고 워치로 다녀온 하위 항목).
+    기압 층 이동도 워치 층도 없으면 []. cal: 사용자가 확정한 층 [{ts, lat, lon, dh, level, ap}]"""
     win = [x for x in hs if v["start"] - BEFORE - timedelta(minutes=2) <= x[0] <= v["end"]]
     evs = [e for e in detect(win) if e["start"] >= v["start"] - BEFORE]
     exc = excursions(v, steps, hk or [], evs)
@@ -244,25 +235,35 @@ def segments(v: dict, hs: list[tuple[datetime, float]], steps: list[dict], cal: 
             dh += e["dh"]
             t = e["end"]
             via = classify(e, steps)
-    # 폰을 두고 워치로 계단을 오른 구간: 그때 폰이 있던 층 + 오른 층수
-    for x in exc:
-        i = next((k for k, sg in enumerate(out) if sg["start"] <= x["start"] < sg["end"]), None)
-        if i is None:
+    # 같은 층이 이어지면 합침 (작은 흔들림 두 번이 서로 상쇄된 경우 등)
+    merged: list[dict] = []
+    for sg in out:
+        if merged and merged[-1]["level"] == sg["level"]:
+            merged[-1]["end"] = sg["end"]
             continue
-        sg = out[i]
-        dh_x = sg["dh"] + x["floors"] * WATCH_FLOOR_M
+        merged.append(dict(sg, subs=[]))
+    # 폰을 두고 워치로 계단을 오른 구간 → 그때 폰이 있던(폰으로 확인된) 층 구간의 하위 항목
+    for x in exc:
+        sg = next((g for g in merged if g["start"] <= x["start"] < g["end"]), None)
+        if sg is None:
+            continue
         hit = next((c for k, c in by_ts.items() if abs((k - x["start"]).total_seconds()) < 1), None)
         lv = hit["level"] if hit else sg["level"] + int(x["floors"])
-        mid = {"start": x["start"], "end": x["end"], "dh": round(dh_x, 2), "via": "stairs", "ap": None,
-               "level": lv, "est": not hit, "label": parking.label(lv), "src": "watch"}
-        back = dict(sg, start=x["end"], via="back", src="watch")
-        head = dict(sg, end=x["start"])
-        out[i:i + 1] = [s_ for s_ in (head, mid, back) if s_["end"] > s_["start"] or s_ is mid]
-    # 같은 층이 이어지면 합침 (작은 흔들림 두 번이 서로 상쇄된 경우 등)
-    merged = []
-    for s in out:
-        if merged and merged[-1]["level"] == s["level"]:
-            merged[-1]["end"] = s["end"]
-            continue
-        merged.append(s)
-    return merged if len(merged) > 1 else []
+        sg["subs"].append({"kind": "floor", "start": x["start"], "end": x["end"],
+                           "dh": round(sg["dh"] + x["floors"] * WATCH_FLOOR_M, 2),
+                           "level": lv, "est": not hit, "label": parking.label(lv)})
+        if x["end"] < sg["end"]:
+            sg["subs"].append({"kind": "back", "start": x["end"], "end": x["end"], "level": sg["level"], "label": sg["label"]})
+    return merged
+
+
+def attach_away(segs: list[dict], aw: list[dict]) -> list[dict]:
+    """폰 두고 이동 → 시작 시각이 든 층 구간의 하위 항목. 하위 항목은 시간순 (같은 시각이면 폰 두고 이동 먼저)"""
+    rest = []
+    for a in aw:
+        sg = next((g for g in segs if g["start"] <= a["start"] < g["end"]), None)
+        (sg["subs"] if sg else rest).append(dict(a, kind="away"))
+    order = {"away": 0, "floor": 1, "back": 2}
+    for g in segs:
+        g["subs"].sort(key=lambda x: (x["start"], order[x["kind"]]))
+    return rest

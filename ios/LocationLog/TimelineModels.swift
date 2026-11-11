@@ -35,7 +35,7 @@ struct TimelineItem: Decodable, Identifiable, Hashable {
     let path: [[Double]]?
     let park: TimelinePark?     // 운전 끝 주차 층
     let floors: [TimelineFloor]?   // 머문 곳 안 층 구간 (층 이동이 있을 때만)
-    let away: [TimelineAway]?      // 폰은 놓여 있는데 워치로 걸은 구간
+    let subs: [TimelineSub]?       // 층 구간이 없을 때 머문 곳 바로 아래 하위 항목 (폰 두고 이동 등)
 
     var id: String { "\(kind)-\(Int(start))" }
     var isVisit: Bool { kind == "visit" }
@@ -80,26 +80,31 @@ struct TimelineFloor: Decodable, Hashable, Identifiable {
     let via: String?            // elevator | stairs | escalator
     let dh: Double
     let ap: String?
-    let src: String?            // watch = 폰을 두고 워치 기록으로 추정
+    let subs: [TimelineSub]?    // 이 층(폰으로 확인)에 폰을 두고 워치로 다녀온 것 — 시간순
     var id: Double { start }
 
     var viaLabel: String? {
-        let w = src == "watch"
         switch via {
         case "elevator": return "엘리베이터로 이동"
-        case "stairs": return w ? "계단으로 이동 · 워치 (폰 두고)" : "계단으로 이동"
+        case "stairs": return "계단으로 이동"
         case "escalator": return "에스컬레이터로 이동"
-        case "back": return "폰 있는 층으로 돌아옴 · 워치"
         default: return nil
         }
     }
 }
 
-struct TimelineAway: Decodable, Hashable, Identifiable {
+/// 폰으로 확인된 항목 아래 작은 글씨 하위 항목 (서버 floors.attach_away / segments.subs)
+/// kind: away = 폰 두고 이동(워치 걸음) · floor = 워치 계단으로 오른 층 · back = 폰 있는 층으로 돌아옴
+struct TimelineSub: Decodable, Hashable, Identifiable {
+    let kind: String
     let start: Double
     let end: Double
-    let steps: Int
-    var id: Double { start }
+    let steps: Int?
+    let level: Int?
+    let label: String?
+    let est: Bool?
+    let dh: Double?
+    var id: String { "\(kind)-\(Int(start))" }
 }
 
 struct FloorFixBody: Encodable {

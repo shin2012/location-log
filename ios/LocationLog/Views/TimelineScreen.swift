@@ -105,12 +105,13 @@ struct TimelineScreen: View {
                                 Button("자세히", systemImage: "info.circle") { detail = it }
                             }
                         ForEach(it.floors ?? []) { f in
-                            FloorRow(floor: f) { lv in await setFloor(it, f, lv) }
+                            FloorRow(floor: f) { lv in await setFloor(it, f.start, f.dh, f.ap, lv) }
+                            ForEach(f.subs ?? []) { x in
+                                SubRow(sub: x, indent: 48) { lv in await setFloor(it, x.start, x.dh ?? 0, nil, lv) }
+                            }
                         }
-                        ForEach(it.away ?? []) { w in
-                            Label("폰 두고 이동 " + Fmt.hm(w.start) + "–" + Fmt.hm(w.end) + " · 워치 \(w.steps.formatted())걸음", systemImage: "applewatch")
-                                .font(.caption).foregroundStyle(.secondary)
-                                .padding(.leading, 20)
+                        ForEach(it.subs ?? []) { x in
+                            SubRow(sub: x, indent: 40) { lv in await setFloor(it, x.start, x.dh ?? 0, nil, lv) }
                         }
                     }
                 } else if loading {
@@ -236,10 +237,10 @@ struct TimelineScreen: View {
     }
 
     /// 머문 곳 층 구간 확정 (nil = 취소) → 그 장소 층 높이·공유기 층 학습
-    private func setFloor(_ it: TimelineItem, _ f: TimelineFloor, _ level: Int?) async {
+    private func setFloor(_ it: TimelineItem, _ ts: Double, _ dh: Double, _ ap: String?, _ level: Int?) async {
         guard let la = it.lat, let lo = it.lon else { return }
         do {
-            let _: OKResponse = try await API.send("PUT", "floor", body: FloorFixBody(ts: f.start, lat: la, lon: lo, dh: f.dh, level: level, ap: f.ap))
+            let _: OKResponse = try await API.send("PUT", "floor", body: FloorFixBody(ts: ts, lat: la, lon: lo, dh: dh, level: level, ap: ap))
         } catch { self.error = error.localizedDescription }
         await load()
     }
@@ -306,8 +307,7 @@ struct FloorRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: floor.via == nil ? "building.2" : floor.via == "elevator" ? "arrow.up.arrow.down.square"
-                  : floor.via == "back" ? "arrow.uturn.backward" : floor.src == "watch" ? "applewatch" : "figure.stairs")
+            Image(systemName: floor.via == nil ? "building.2" : floor.via == "elevator" ? "arrow.up.arrow.down.square" : "figure.stairs")
                 .foregroundStyle(.secondary)
                 .frame(width: 28)
             VStack(alignment: .leading, spacing: 2) {
@@ -320,6 +320,43 @@ struct FloorRow: View {
                       range: LevelMenu.around(floor.level), set: set)
         }
         .padding(.leading, 20)
+    }
+}
+
+/// 폰으로 확인된 항목 아래 작은 글씨 하위 항목 (시간순)
+struct SubRow: View {
+    let sub: TimelineSub
+    var indent: CGFloat = 40
+    let set: (Int?) async -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: sub.kind == "back" ? "arrow.uturn.backward" : sub.kind == "floor" ? "figure.stairs" : "applewatch")
+                .frame(width: 16)
+            Text(text).monospacedDigit()
+            Spacer(minLength: 0)
+            if sub.kind == "floor", let lv = sub.level, let lb = sub.label {
+                LevelMenu(level: lv, label: lb, est: sub.est ?? true, symbol: "applewatch", range: LevelMenu.around(lv), set: set)
+                    .controlSize(.small)
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.leading, indent)
+        .listRowSeparator(.hidden, edges: .top)
+    }
+
+    private var text: String {
+        switch sub.kind {
+        case "away":
+            return Fmt.hm(sub.start) + "–" + Fmt.hm(sub.end) + " 폰 두고 이동" + (sub.steps.map { " · 워치 \($0.formatted())걸음" } ?? "")
+        case "floor":
+            return Fmt.hm(sub.start) + "–" + Fmt.hm(sub.end) + " 워치 계단으로 " + (sub.label ?? "") + " 다녀옴"
+        case "back":
+            return Fmt.hm(sub.start) + " " + (sub.label ?? "") + "(폰 있는 층)로 돌아옴"
+        default:
+            return Fmt.hm(sub.start)
+        }
     }
 }
 

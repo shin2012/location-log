@@ -388,7 +388,7 @@ def day_timeline(date: str):
         it["start"], it["end"] = dt_to_ms(it["start"]), dt_to_ms(it["end"])
         if "park" in it:
             it["park"]["ts"] = dt_to_ms(it["park"]["ts"])
-        for f in it.get("floors", []) + it.get("away", []):
+        for f in it.get("floors", []) + it.get("subs", []) + [x for f in it.get("floors", []) for x in f.get("subs", [])]:
             f["start"], f["end"] = dt_to_ms(f["start"]), dt_to_ms(f["end"])
     return {"date": date, **out}
 
