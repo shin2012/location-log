@@ -1,4 +1,5 @@
 """python3 tests/test_floors.py"""
+import json
 import math
 import sys
 from datetime import datetime, timedelta
@@ -40,7 +41,7 @@ def test_office_elevator():
     assert len(ev) == 2, ev
     assert abs(ev[0]["dh"] - 21) < 1 and abs(ev[1]["dh"] + 21) < 1.5
     segs = F.segments(V, hs, [], [])
-    assert [s["label"] for s in segs] == ["1F", "7F", "1F"], segs
+    assert [s["label"] for s in segs] == ["1F", "7F", "1F"], segs   # 21m = 4.5 + 4.7×3.5 → 7F
     assert segs[1]["via"] == "elevator" and segs[2]["via"] == "elevator"
 
 
@@ -50,7 +51,7 @@ def test_stairs_with_steps():
     steps = [{"ts": m, "steps": 46}, {"ts": m + timedelta(minutes=1), "steps": 20}]
     segs = F.segments(V, hs, steps, [])
     assert len(segs) == 2 and segs[1]["via"] == "stairs", segs
-    assert segs[1]["label"] == "2F"           # 5.2m / 3.5 → 1.49 → 2F
+    assert segs[1]["label"] == "2F"           # 5.2m: 1층 층고 4.5 기준 → 2F
     # 걸음 없이 천천히 = 에스컬레이터
     assert F.segments(V, hs, [], [])[1]["via"] == "escalator"
     # 만보계 계단 층수가 있으면 계단
@@ -85,6 +86,19 @@ def test_parking_base():
 def test_small_wobble_ignored():
     hs = series([(600, 0.0), (10, 1.5), (600, 1.5), (10, 0.0), (600, 0.0)])   # 1.5m 흔들림
     assert F.detect(hs) == []
+
+
+def test_real_20261111():
+    """실측: 13:59 주차장 진입(+2m 경사로), 14:01 주차(차 문 +1.2m), 14:02 2층(+5.2m/8초, 사용자 확인).
+    그 뒤 2시간 걸음 0·정지 — 기압은 날씨로 +3.7m 천천히 → 더 나뉘면 안 됨"""
+    d = json.loads((Path(__file__).parent / "data" / "floors_20261111.json").read_text())
+    baro = [{"ts": datetime.fromisoformat(t), "kpa": k} for t, k in d["baro"]]
+    steps = [{"ts": datetime.fromisoformat(t), "steps": n} for t, n in d["steps"]]
+    v = {"start": datetime(2026, 11, 11, 4, 59, 39), "end": datetime(2026, 11, 11, 7, 15), "lat": 37.5, "lon": 127.0}
+    segs = F.segments(v, F.heights(baro), steps, [], base_dh=0.44)
+    assert [s["label"] for s in segs] == ["1F", "2F"], [(s["label"], s["start"], s["dh"]) for s in segs]
+    assert segs[1]["via"] == "elevator", segs[1]
+    assert segs[1]["start"].strftime("%H:%M") == "05:02"
 
 
 if __name__ == "__main__":
