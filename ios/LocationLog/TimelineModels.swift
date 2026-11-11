@@ -34,6 +34,7 @@ struct TimelineItem: Decodable, Identifiable, Hashable {
     let est: Bool?              // 터널 센서 추정 포함
     let path: [[Double]]?
     let park: TimelinePark?     // 운전 끝 주차 층
+    let floors: [TimelineFloor]?   // 머문 곳 안 층 구간 (층 이동이 있을 때만)
 
     var id: String { "\(kind)-\(Int(start))" }
     var isVisit: Bool { kind == "visit" }
@@ -66,6 +67,37 @@ struct TimelinePark: Decodable, Hashable {
     let level: Int
     let label: String
     let est: Bool
+}
+
+/// 머문 곳 안 층 구간 (서버 floors.py). via = 이 층으로 온 방법
+struct TimelineFloor: Decodable, Hashable, Identifiable {
+    let start: Double
+    let end: Double
+    let level: Int
+    let label: String
+    let est: Bool
+    let via: String?            // elevator | stairs | escalator
+    let dh: Double
+    let ap: String?
+    var id: Double { start }
+
+    var viaLabel: String? {
+        switch via {
+        case "elevator": return "엘리베이터"
+        case "stairs": return "계단"
+        case "escalator": return "에스컬레이터"
+        default: return nil
+        }
+    }
+}
+
+struct FloorFixBody: Encodable {
+    let ts: Double
+    let lat: Double
+    let lon: Double
+    let dh: Double
+    let level: Int?
+    let ap: String?
 }
 
 /// 자동 체크인 장소 (GET autocheckin/places?all=1)

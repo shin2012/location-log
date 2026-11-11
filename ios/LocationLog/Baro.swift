@@ -71,6 +71,7 @@ final class Baro: ObservableObject {
         if let l = lastSaved, abs(l.kpa - kpa) < Self.saveStep, s.ts - l.ts < Self.saveEvery { return }
         lastSaved = s
         append(s)
+        WifiLog.shared.check()
     }
 
     /// t(epoch s) 앞뒤 5초 평균 기압. 그 근처(±30초)에 값이 없으면 nil

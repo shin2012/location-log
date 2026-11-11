@@ -97,13 +97,16 @@ struct TimelineScreen: View {
                             Button { select(it) } label: { TimelineRow(item: it) }
                                 .buttonStyle(.plain)
                             if let pk = it.park {
-                                ParkMenu(park: pk) { lv in await setPark(pk, lv) }
+                                LevelMenu(level: pk.level, label: pk.label, est: pk.est) { lv in await setPark(pk, lv) }
                             }
                         }
                             .listRowBackground(selected == it ? Color.accentColor.opacity(0.12) : nil)
                             .contextMenu {
                                 Button("자세히", systemImage: "info.circle") { detail = it }
                             }
+                        ForEach(it.floors ?? []) { f in
+                            FloorRow(floor: f) { lv in await setFloor(it, f, lv) }
+                        }
                     }
                 } else if loading {
                     HStack { Spacer(); ProgressView(); Spacer() }
@@ -227,53 +230,90 @@ struct TimelineScreen: View {
         await load()
     }
 
+    /// 머문 곳 층 구간 확정 (nil = 취소) → 그 장소 층 높이·공유기 층 학습
+    private func setFloor(_ it: TimelineItem, _ f: TimelineFloor, _ level: Int?) async {
+        guard let la = it.lat, let lo = it.lon else { return }
+        do {
+            let _: OKResponse = try await API.send("PUT", "floor", body: FloorFixBody(ts: f.start, lat: la, lon: lo, dh: f.dh, level: level, ap: f.ap))
+        } catch { self.error = error.localizedDescription }
+        await load()
+    }
+
     private func fit(_ cs: [CLLocationCoordinate2D]) {
         guard !cs.isEmpty else { return }
         fitReq = MapFit(key: "\(key)-\(selected?.id ?? "all")", coords: cs)
     }
 }
 
-/// 운전 끝 주차 층 표시 + 눌러서 고치기
-struct ParkMenu: View {
-    let park: TimelinePark
+/// 층 표시 + 눌러서 고치기 (주차·머문 곳 층 구간 공용)
+struct LevelMenu: View {
+    let level: Int
+    let label: String
+    let est: Bool
+    var symbol = "parkingsign.circle.fill"
+    var range: [Int] = Array((-6...4).reversed())
     let set: (Int?) async -> Void
     @State private var busy = false
 
-    private static let levels = Array((-6...4).reversed())   // 5F … B6
-
     var body: some View {
         Menu {
-            if park.est {
-                Button("\(park.label) 맞아요", systemImage: "checkmark") { run(park.level) }
+            if est {
+                Button("\(label) 맞아요", systemImage: "checkmark") { run(level) }
             }
-            Section("실제 주차 층") {
-                ForEach(Self.levels, id: \.self) { lv in
+            Section("실제 층") {
+                ForEach(range, id: \.self) { lv in
                     Button { run(lv) } label: {
-                        if lv == park.level && !park.est { Label(ParkModel.label(lv), systemImage: "checkmark") } else { Text(ParkModel.label(lv)) }
+                        if lv == level && !est { Label(ParkModel.label(lv), systemImage: "checkmark") } else { Text(ParkModel.label(lv)) }
                     }
                 }
             }
-            if !park.est {
+            if !est {
                 Button("추정으로 되돌리기", systemImage: "arrow.uturn.backward") { run(nil) }
             }
         } label: {
             HStack(spacing: 3) {
-                if busy { ProgressView().controlSize(.mini) } else { Image(systemName: "parkingsign.circle.fill") }
-                Text(park.label).fontWeight(.semibold).monospacedDigit()
-                if park.est { Text("추정").font(.caption2) }
+                if busy { ProgressView().controlSize(.mini) } else { Image(systemName: symbol) }
+                Text(label).fontWeight(.semibold).monospacedDigit()
+                if est { Text("추정").font(.caption2) }
             }
             .font(.subheadline)
             .padding(.horizontal, 8).padding(.vertical, 5)
-            .foregroundStyle(park.est ? Color.secondary : Color.white)
-            .background(park.est ? AnyShapeStyle(.quaternary) : AnyShapeStyle(Color.blue), in: Capsule())
+            .foregroundStyle(est ? Color.secondary : Color.white)
+            .background(est ? AnyShapeStyle(.quaternary) : AnyShapeStyle(Color.blue), in: Capsule())
         }
         .buttonStyle(.borderless)
-        .accessibilityLabel("주차 \(park.label)" + (park.est ? " 추정, 눌러서 고치기" : ""))
+        .accessibilityLabel("\(label)" + (est ? " 추정, 눌러서 고치기" : ""))
     }
 
     private func run(_ lv: Int?) {
         busy = true
         Task { await set(lv); busy = false }
+    }
+
+    /// 지금 층 앞뒤로 (지하 6층 ~ 지금+10층)
+    static func around(_ lv: Int) -> [Int] { Array((-6...max(10, lv + 10)).reversed()) }
+}
+
+/// 머문 곳 아래 층 구간 한 줄
+struct FloorRow: View {
+    let floor: TimelineFloor
+    let set: (Int?) async -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: floor.via == nil ? "building.2" : floor.via == "elevator" ? "arrow.up.arrow.down.square" : "figure.stairs")
+                .foregroundStyle(.secondary)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(Fmt.hm(floor.start) + "–" + Fmt.hm(floor.end) + " · " + Fmt.durKo(floor.end - floor.start))
+                    .font(.subheadline).monospacedDigit()
+                if let v = floor.viaLabel { Text(v + "로 이동").font(.caption).foregroundStyle(.secondary) }
+            }
+            Spacer(minLength: 0)
+            LevelMenu(level: floor.level, label: floor.label, est: floor.est, symbol: "building.2.fill",
+                      range: LevelMenu.around(floor.level), set: set)
+        }
+        .padding(.leading, 20)
     }
 }
 
@@ -342,6 +382,9 @@ struct TimelineDetailSheet: View {
                             LabeledContent("좌표", value: String(format: "%.5f, %.5f", c.latitude, c.longitude))
                         }
                         LabeledContent("장소", value: item.name ?? "등록 안 된 곳")
+                        if let fs = item.floors, !fs.isEmpty {
+                            LabeledContent("층", value: fs.map(\.label).joined(separator: " → "))
+                        }
                     } else {
                         LabeledContent("이동", value: item.moveLabel)
                         if let km = item.km { LabeledContent("거리", value: String(format: "%.2fkm", km)) }

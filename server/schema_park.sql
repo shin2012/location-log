@@ -18,3 +18,27 @@ CREATE TABLE IF NOT EXISTS park (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (ts)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='주차 층';
+
+-- 1.5.0: 머문 곳 안 층 이동
+-- 연결된 공유기가 바뀐 시각 (iOS NEHotspotNetwork). bssid NULL = Wi-Fi 연결 없음
+CREATE TABLE IF NOT EXISTS day_wifi (
+  ts    DATETIME(3) NOT NULL COMMENT 'UTC',
+  bssid VARCHAR(17) NULL COMMENT '공유기 고유번호 (소문자)',
+  ssid  VARCHAR(64) NULL,
+  PRIMARY KEY (ts)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='연결 공유기';
+
+-- 사용자가 확정한 층 구간 → 장소별 층 높이·공유기 층 학습 (level: 지상1층=0)
+CREATE TABLE IF NOT EXISTS floor_cal (
+  ts    DATETIME(3) NOT NULL COMMENT '층 구간 시작 UTC',
+  lat   DOUBLE NOT NULL,
+  lon   DOUBLE NOT NULL,
+  dh    DOUBLE NOT NULL COMMENT '들어온 곳(지상 또는 주차 높이) 대비 m',
+  level SMALLINT NOT NULL,
+  ap    VARCHAR(20) NULL COMMENT '그 구간 주로 연결된 공유기 (BSSID 앞 5바이트)',
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (ts)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='층 확정';
+
+ALTER TABLE day_step ADD COLUMN IF NOT EXISTS floors_up TINYINT UNSIGNED NULL COMMENT '만보계 계단 오른 층수',
+                     ADD COLUMN IF NOT EXISTS floors_down TINYINT UNSIGNED NULL COMMENT '만보계 계단 내린 층수';

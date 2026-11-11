@@ -127,6 +127,7 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
             }
         }
         Baro.shared.start()
+        WifiLog.shared.start()
         apply()
         scheduleTick()
     }
@@ -145,6 +146,7 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
         config = .off
         store.flush()
         Baro.shared.stop()
+        WifiLog.shared.stop()
     }
 
     func requestPermission() {
@@ -523,6 +525,7 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
         await AutoCheckin.shared.flush()
         await AutoCheckin.shared.refreshPlaces()
         await Baro.shared.upload(wifiOnly: p.wifiOnly)
+        await WifiLog.shared.upload(wifiOnly: p.wifiOnly)
         await Parking.shared.flush()
     }
 

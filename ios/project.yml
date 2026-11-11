@@ -37,9 +37,10 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: kr.b-612.sillage
         NAVER_MAP_KEY_ID: ""
         GOOGLE_MAPS_KEY: ""
-        MARKETING_VERSION: "1.4.0"
+        MARKETING_VERSION: "1.5.0"
         CURRENT_PROJECT_VERSION: 1
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: Config/LocationLog.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

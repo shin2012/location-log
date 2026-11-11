@@ -26,6 +26,8 @@
 | `day_act` | 이동 방식이 바뀐 시각: ts(UTC, PK), act(stationary/walk/run/bike/car), conf(0~2) — iOS 동작 기록, 업로드 때마다 7일치 안에서 지난 커서부터 다시 조회 |
 | `day_step` | 1분 걸음: ts(UTC 분 시작, PK), steps, dist_m — iOS 만보계(CMPedometer), 0 걸음 분도 올림. 처음 켜면 2일 거슬러, 한 번에 최대 24시간 |
 | `day_baro` | 기압: ts(UTC, PK), kpa — iOS 기압계(CMAltimeter), 약 8cm 넘게 바뀌거나 1분마다. 층 이동 분석용 — `server/schema_park.sql` |
+| `day_wifi` | 연결 공유기가 바뀐 시각: ts(PK), bssid(공유기 고유번호, NULL=연결 없음), ssid — 층 판정 보조 (1.5.0) |
+| `floor_cal` | 사용자가 확정한 층 구간: ts(구간 시작, PK), lat, lon, dh, level, ap(BSSID 앞 5바이트) (1.5.0) |
 | `park` | 주차: ts(CarPlay 해제, PK), lat, lon, dh(지상 도로 대비 m), ref_ts, level_est, level_user(사용자 확정) — level 지상1층=0·지하1층=-1 |
 
 <details><summary>API (앱은 <code>/app-api/…</code> 로 부름 = <code>/api/…</code>, 모두 Bearer 토큰)</summary>
@@ -110,4 +112,11 @@ flowchart LR
 - 추정 규칙 = `server/parking.py` ↔ `ios/LocationLog/ParkModel.swift` (같은 규칙, 바꾸면 둘 다): dh ≈ a·level + b, 사용자가 확정한 주차 중 150m 안 것으로 장소별 a(층 높이)·b(입구 높이) 맞춤, 없으면 전체 층 높이 중앙값(처음 3.2m).
 - 서버 `POST /api/park`, `PATCH /api/park/{ts_ms}` {level|null}, `GET /api/park/calib`, `GET /api/park`. 타임라인 운전 이동에 `park` {ts, level, label, est} — 확정 안 한 건 그때그때 최신 보정으로 다시 추정.
 - 시험: `python3 tests/test_parking.py`, `swiftc ios/LocationLog/ParkModel.swift tools/parktest/main.swift -o /tmp/pt && /tmp/pt`
+
+## 머문 곳 안 층 이동 (1.5.0)
+- `server/floors.py` (시험 `python3 tests/test_floors.py`): 기압 → 높이. 날씨 탓 느린 변화(실측 1.5시간 +4m)는 무시하고 **4분 안에 2.5m 넘게 바뀐 뒤 1분 안정**된 계단식 변화만 층 이동. 층 이동끼리의 높이 차만 더함.
+- 방식: 만보계 계단 층수(`day_step.floors_up/down`) → 계단, 수직 0.8m/s 이상 → 엘리베이터, 걸음 많음 → 계단, 그 밖 → 에스컬레이터.
+- 층 번호: 머문 곳에 들어온 순간 = 지상 1층(차로 와서 주차했으면 주차 높이) + 층 이동 합 → parking 모델(장소 150m, 처음 층 높이 3.5m). 사용자 확정 `PUT /api/floor` → `floor_cal`.
+- 공유기(BSSID, `WifiLog.swift`, 'Wi-Fi 정보 접근' 권한 `Config/LocationLog.entitlements`)는 보조: 같은 공유기(앞 5바이트)에서 같은 층으로 2번 이상 확정했을 때만 그 층.
+- 타임라인 머문 곳 `floors` [{start, end, level, label, est, via, dh, ap}] — 층 이동이 있을 때만. 앱에서 층을 눌러 고침.
 

@@ -32,17 +32,17 @@ def label(level: int) -> str:
     return f"B{-level}" if level < 0 else f"{level + 1}F"
 
 
-def global_a(cal: list[dict]) -> float:
+def global_a(cal: list[dict], def_a: float = DEF_A) -> float:
     r = sorted(c["dh"] / c["level"] for c in cal if c["level"] != 0 and A_MIN <= c["dh"] / c["level"] <= A_MAX)
     if not r:
-        return DEF_A
+        return def_a
     n = len(r)
     return r[n // 2] if n % 2 else (r[n // 2 - 1] + r[n // 2]) / 2
 
 
-def model(lat: float, lon: float, cal: list[dict]) -> tuple[float, float]:
+def model(lat: float, lon: float, cal: list[dict], def_a: float = DEF_A) -> tuple[float, float]:
     """cal: 사용자가 고친(확정한) 주차 [{lat, lon, dh, level}] → (a, b)"""
-    g = global_a(cal)
+    g = global_a(cal, def_a)
     near = [c for c in cal if hav_m((lat, lon), (c["lat"], c["lon"])) <= NEAR_M]
     if not near:
         return g, 0.0

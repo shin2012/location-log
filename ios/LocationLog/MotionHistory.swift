@@ -27,7 +27,7 @@ final class MotionHistory: ObservableObject {
     private static let stepMinutesPerRun = 24 * 60
 
     struct ActItem: Encodable { let ts: Double; let act: String; let conf: Int }
-    struct StepItem: Encodable { let ts: Double; let steps: Int; let dist: Double? }
+    struct StepItem: Encodable { let ts: Double; let steps: Int; let dist: Double?; var up: Int? = nil; var down: Int? = nil }
     struct ActsBody: Encodable { let acts: [ActItem] }
     struct StepsBody: Encodable { let steps: [StepItem] }
 
@@ -137,7 +137,7 @@ final class MotionHistory: ObservableObject {
                 while m < blockEnd {
                     let n = m.addingTimeInterval(60)
                     let r = try await querySteps(m, n)
-                    buf.append(StepItem(ts: m.timeIntervalSince1970 * 1000, steps: r.steps, dist: r.dist))
+                    buf.append(StepItem(ts: m.timeIntervalSince1970 * 1000, steps: r.steps, dist: r.dist, up: r.up, down: r.down))
                     m = n
                 }
             }
@@ -148,17 +148,19 @@ final class MotionHistory: ObservableObject {
         try await flush()
     }
 
-    private nonisolated func querySteps(_ from: Date, _ to: Date) async throws -> (steps: Int, dist: Double?) {
+    /// up/down = 만보계가 센 계단 오르내린 층수 (기기가 지원할 때만)
+    private nonisolated func querySteps(_ from: Date, _ to: Date) async throws -> (steps: Int, dist: Double?, up: Int?, down: Int?) {
         let ped = CMPedometer()
         return try await withCheckedThrowingContinuation { cont in
             ped.queryPedometerData(from: from, to: to) { data, err in
                 _ = ped
                 if let err = err as NSError? {
                     // 기록 없음(기기 꺼짐 등)은 0 으로
-                    if err.domain == CMErrorDomain && err.code == Int(CMErrorNilData.rawValue) { cont.resume(returning: (0, nil)); return }
+                    if err.domain == CMErrorDomain && err.code == Int(CMErrorNilData.rawValue) { cont.resume(returning: (0, nil, nil, nil)); return }
                     cont.resume(throwing: err); return
                 }
-                cont.resume(returning: (data?.numberOfSteps.intValue ?? 0, data?.distance?.doubleValue))
+                cont.resume(returning: (data?.numberOfSteps.intValue ?? 0, data?.distance?.doubleValue,
+                                        data?.floorsAscended?.intValue, data?.floorsDescended?.intValue))
             }
         }
     }

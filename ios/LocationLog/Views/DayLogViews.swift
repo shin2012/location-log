@@ -235,6 +235,7 @@ struct DriveSettingsView: View {
     @ObservedObject var cpEvents = CarPlayEvents.shared
     @ObservedObject var parking = Parking.shared
     @ObservedObject var baro = Baro.shared
+    @ObservedObject var wifi = WifiLog.shared
     private var p: Binding<DayPrefs> { $settings.prefs }
 
     var body: some View {
@@ -262,9 +263,10 @@ struct DriveSettingsView: View {
                 if let l = parking.lastPark {
                     LabeledContent("마지막 주차", value: "\(ParkModel.label(l.level)) · 도로 대비 \(String(format: "%+.1f", l.dh))m · \(Fmt.hm(l.ts))")
                 }
-                if let e = parking.lastError ?? baro.lastError { Text(e).font(.footnote).foregroundStyle(.orange) }
-            } header: { Text("주차 층") } footer: {
-                Text("CarPlay 연결이 끊기면(주차) 마지막으로 도로를 달리던 곳과 지금의 기압 차로 몇 층인지 추정해 1분 뒤 알려 줍니다(1분 안에 다시 연결되면 취소). 알림을 길게 눌러 '한 층 위·아래'로 고치거나 타임라인에서 층을 누르면, 그 주차장(150m 안)의 층 높이를 배워 다음부터 맞춥니다. 기압은 하루 기록이 켜져 있는 동안 계속 저장해 층 이동 분석에도 씁니다.")
+                LabeledContent("연결 공유기", value: wifi.current?.bssid.map { (wifi.current?.ssid ?? "") + " · " + $0 } ?? "없음")
+                if let e = parking.lastError ?? baro.lastError ?? wifi.lastError { Text(e).font(.footnote).foregroundStyle(.orange) }
+            } header: { Text("주차 층 · 층 이동") } footer: {
+                Text("CarPlay 연결이 끊기면(주차) 마지막으로 도로를 달리던 곳과 지금의 기압 차로 몇 층인지 추정해 1분 뒤 알려 줍니다(1분 안에 다시 연결되면 취소). 알림을 길게 눌러 '한 층 위·아래'로 고치거나 타임라인에서 층을 누르면, 그 주차장(150m 안)의 층 높이를 배워 다음부터 맞춥니다. 기압은 하루 기록이 켜져 있는 동안 계속 저장해, 머문 곳 안에서 엘리베이터·계단으로 층을 옮기면 타임라인에 층 구간으로 보여 줍니다. 연결된 공유기 고유번호는 층 확인용 보조로만 씁니다(같은 공유기에서 두 번 이상 같은 층으로 확정했을 때).")
             }
             Section {
                 Label("단축어 앱 › 자동화 › 새로운 자동화 › CarPlay", systemImage: "1.circle")

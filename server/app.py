@@ -272,6 +272,8 @@ class DayStep(BaseModel):
     ts: float  # epoch ms, 분 시작
     steps: int
     dist: float | None = None
+    up: int | None = None      # 만보계 계단 오른 층수 (1.5.0~)
+    down: int | None = None
 
 
 class DayStepsIn(BaseModel):
@@ -323,11 +325,13 @@ def day_acts(body: DayActsIn):
 @app.post("/api/day/steps")
 def day_steps(body: DayStepsIn):
     """1분 걸음 (0 걸음 분 포함)"""
-    rows = [(ms_to_dt(p.ts).replace(second=0, microsecond=0), max(0, min(65535, p.steps)), p.dist)
+    def fl(x):
+        return None if x is None else max(0, min(255, x))
+    rows = [(ms_to_dt(p.ts).replace(second=0, microsecond=0), max(0, min(65535, p.steps)), p.dist, fl(p.up), fl(p.down))
             for p in body.steps]
     if rows:
         with db() as cur:
-            cur.executemany("REPLACE INTO day_step (ts, steps, dist_m) VALUES (%s,%s,%s)", rows)
+            cur.executemany("REPLACE INTO day_step (ts, steps, dist_m, floors_up, floors_down) VALUES (%s,%s,%s,%s,%s)", rows)
     return {"ok": True, "n": len(rows)}
 
 
@@ -356,7 +360,7 @@ def day_timeline(date: str):
         cur.execute("(SELECT ts, act FROM day_act WHERE ts < %s ORDER BY ts DESC LIMIT 1) UNION ALL "
                     "(SELECT ts, act FROM day_act WHERE ts >= %s AND ts < %s) ORDER BY ts", (a, a, b))
         acts = cur.fetchall()
-        cur.execute("SELECT ts, steps FROM day_step WHERE ts >= %s AND ts < %s ORDER BY ts", (a, b))
+        cur.execute("SELECT ts, steps, floors_up, floors_down FROM day_step WHERE ts >= %s AND ts < %s ORDER BY ts", (a, b))
         steps = cur.fetchall()
         # 운전 판정: swarm.FSQ_CarPlay (앱·단축어 둘 다 여기로 모임, 한국 시각) — loc_rw 에 SELECT 권한
         cur.execute("SELECT event_type AS event, event_time - INTERVAL 9 HOUR AS at FROM swarm.FSQ_CarPlay "
@@ -370,11 +374,20 @@ def day_timeline(date: str):
                     (a, b))
         cks = [{**c, "lat": float(c["lat"]), "lon": float(c["lon"])} for c in cur.fetchall()]
         parks = _parks(cur, a - timedelta(hours=1), b + timedelta(hours=1))
-    out = TL.build_items(a, b, vs, pts, acts, steps, cps, places, cks, parks)
+        cur.execute("SELECT ts, kpa FROM day_baro WHERE ts >= %s AND ts < %s ORDER BY ts", (a - timedelta(hours=1), b))
+        baro = cur.fetchall()
+        cur.execute("(SELECT ts, bssid FROM day_wifi WHERE ts < %s ORDER BY ts DESC LIMIT 1) UNION ALL "
+                    "(SELECT ts, bssid FROM day_wifi WHERE ts >= %s AND ts < %s) ORDER BY ts", (a, a, b))
+        wifi = cur.fetchall()
+        cur.execute("SELECT ts, lat, lon, dh, level, ap FROM floor_cal")
+        fcal = cur.fetchall()
+    out = TL.build_items(a, b, vs, pts, acts, steps, cps, places, cks, parks, baro, fcal, wifi)
     for it in out["items"]:
         it["start"], it["end"] = dt_to_ms(it["start"]), dt_to_ms(it["end"])
         if "park" in it:
             it["park"]["ts"] = dt_to_ms(it["park"]["ts"])
+        for f in it.get("floors", []):
+            f["start"], f["end"] = dt_to_ms(f["start"]), dt_to_ms(f["end"])
     return {"date": date, **out}
 
 
@@ -455,6 +468,50 @@ def day_baro(body: BaroBody):
         with db() as cur:
             cur.executemany("REPLACE INTO day_baro (ts, kpa) VALUES (%s,%s)", rows)
     return {"ok": True, "n": len(rows)}
+
+
+class WifiEv(BaseModel):
+    ts: float                                         # epoch ms, 연결 공유기가 바뀐 때
+    bssid: str | None = Field(default=None, max_length=17)   # None = Wi-Fi 연결 없음
+    ssid: str | None = Field(default=None, max_length=64)
+
+
+class WifiBody(BaseModel):
+    events: list[WifiEv]
+
+
+@app.post("/api/day/wifi")
+def day_wifi(body: WifiBody):
+    """연결된 공유기 고유번호(BSSID)가 바뀐 시각 — 층 판정 보조"""
+    rows = [(ms_to_dt(e.ts), e.bssid.lower() if e.bssid else None, e.ssid) for e in body.events]
+    if rows:
+        with db() as cur:
+            cur.executemany("REPLACE INTO day_wifi (ts, bssid, ssid) VALUES (%s,%s,%s)", rows)
+    return {"ok": True, "n": len(rows)}
+
+
+class FloorFix(BaseModel):
+    ts: float                    # 층 구간 시작 epoch ms (타임라인 floors[].start)
+    lat: float
+    lon: float
+    dh: float                    # 그 구간 높이 (floors[].dh)
+    level: int | None = None     # None = 확정 취소
+    ap: str | None = Field(default=None, max_length=20)
+
+
+@app.put("/api/floor")
+def floor_fix(body: FloorFix):
+    """머문 곳 층 구간을 사용자가 확정 → 그 장소(150m) 층 높이·공유기 층 학습"""
+    ts = ms_to_dt(body.ts)
+    with db() as cur:
+        if body.level is None:
+            cur.execute("DELETE FROM floor_cal WHERE ts BETWEEN %s AND %s", (ms_to_dt(body.ts - 2), ms_to_dt(body.ts + 2)))
+        else:
+            if not (PK.LEVEL_MIN <= body.level <= PK.LEVEL_MAX):
+                raise HTTPException(400, "층 범위 밖")
+            cur.execute("REPLACE INTO floor_cal (ts, lat, lon, dh, level, ap) VALUES (%s,%s,%s,%s,%s,%s)",
+                        (ts, body.lat, body.lon, body.dh, body.level, body.ap))
+    return {"ok": True}
 
 
 def _park_cal(cur, exclude=None) -> list[dict]:

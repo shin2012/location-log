@@ -6,6 +6,7 @@ DB 를 읽는 부분(build)과 계산(순수 함수)을 나눠 시험하기 쉽�
 import math
 from datetime import datetime, timedelta
 
+import floors
 import parking
 import timefix
 
@@ -114,9 +115,11 @@ def simplify(path: list, n: int = 300) -> list:
 
 def build_items(day0: datetime, day1: datetime, visits_raw: list[dict], pts: list[dict], acts: list[dict],
                 steps: list[dict], carplay: list[dict], places: list[dict], checkins: list[dict] | None = None,
-                parks: list[dict] | None = None) -> dict:
+                parks: list[dict] | None = None, baro: list[dict] | None = None, floor_cal: list[dict] | None = None,
+                wifi: list[dict] | None = None) -> dict:
     """[day0, day1) 하루 (UTC). carplay: [{event, at}] 시간순. places: 자동 체크인 장소 [{name, lat, lon, radius}].
-    parks: 주차 [{ts, level, est}] — 운전 이동 끝(마지막 점 ~20분 뒤까지)에 붙임."""
+    parks: 주차 [{ts, level, est, dh}] — 운전 이동 끝(마지막 점 ~20분 뒤까지)에 붙임.
+    baro/floor_cal/wifi: 머문 곳 안 층 구간 (floors.py). 주차 직후 머문 곳은 주차 높이에서 시작."""
     visits = merge_visits(visits_raw)
     # 떠난 시각 = 움직이기 시작한 때 (앱은 반경을 벗어난 뒤에야 알아챔)
     for v in visits:
@@ -137,16 +140,25 @@ def build_items(day0: datetime, day1: datetime, visits_raw: list[dict], pts: lis
         if d < best.get(id(v), 9):
             best[id(v)], names[id(v)] = d, c
     items = []
+    hs = floors.heights(baro or [])
     for v in visits:
         if v["end"] <= day0 or v["start"] >= day1:
             continue
         s, e = max(v["start"], day0), min(v["end"], day1)
         ck = names.get(id(v))
         pl = next((p for p in places if hav_km((p["lat"], p["lon"]), (v["lat"], v["lon"])) * 1000 <= max(150, p["radius"] * 1.5)), None)
-        items.append({"kind": "visit", "start": s, "end": e, "lat": v["lat"], "lon": v["lon"],
-                      "name": ck["name"] if ck else (pl["name"] if pl else None), "checkin": bool(ck),
-                      "open": bool(v.get("open")),
-                      "minutes": round((e - s).total_seconds() / 60)})
+        it = {"kind": "visit", "start": s, "end": e, "lat": v["lat"], "lon": v["lon"],
+              "name": ck["name"] if ck else (pl["name"] if pl else None), "checkin": bool(ck),
+              "open": bool(v.get("open")),
+              "minutes": round((e - s).total_seconds() / 60)}
+        if hs:
+            pk = [k for k in parks or [] if v["start"] - PARK_AFTER <= k["ts"] <= v["start"] + timedelta(minutes=5)
+                  and k.get("dh") is not None]
+            base = pk[-1]["dh"] if pk else 0.0
+            segs = floors.segments(dict(v, start=s, end=e), hs, steps, floor_cal or [], wifi, base_dh=base)
+            if segs:
+                it["floors"] = segs
+        items.append(it)
     # 운전 = CarPlay 연결 구간
     sessions, on = [], None
     for c in carplay:
