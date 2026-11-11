@@ -9,7 +9,7 @@
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>화면이 꺼져 있거나 다른 앱을 쓰는 동안에도 이동 경로를 계속 기록하고, '하루 종일 기록'을 켜면 하루 내내 위치를 저장하려면 '항상 허용'이 필요합니다.</string>
 	<key>NSMotionUsageDescription</key>
-	<string>터널처럼 GPS가 끊긴 구간의 경로를 휴대폰 움직임 센서로 이어 그리고, 하루 종일 기록에서 걷기·차량 등 움직임을 알아채 머무는 동안 GPS를 꺼 배터리를 아끼고, 이동 방식과 걸음 수를 기록해 데일리요섭에서 머문 시간·이동 수단을 정확히 맞춥니다.</string>
+	<string>터널처럼 GPS가 끊긴 구간의 경로를 휴대폰 움직임 센서로 이어 그리고, 하루 종일 기록에서 걷기·차량 등 움직임을 알아채 머무는 동안 GPS를 꺼 배터리를 아끼고, 이동 방식과 걸음 수를 기록해 데일리요섭에서 머문 시간·이동 수단을 정확히 맞추고, 기압계로 주차한 층과 층 이동을 기록합니다.</string>
 	<key>NMFNcpKeyId</key>
 	<string>$(NAVER_MAP_KEY_ID)</string>
 	<key>GMSApiKey</key>

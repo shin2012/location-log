@@ -126,6 +126,7 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
                 }
             }
         }
+        Baro.shared.start()
         apply()
         scheduleTick()
     }
@@ -143,6 +144,7 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
         accumulateGPS(on: false)
         config = .off
         store.flush()
+        Baro.shared.stop()
     }
 
     func requestPermission() {
@@ -196,6 +198,7 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
     func setForeground(_ on: Bool) {
         if on {
             refreshBattery()
+            if running && settings.prefs.parkNotify && settings.prefs.driveRecord { Parking.shared.requestPermission() }
             Task { await upload(force: true) }
         } else {
             store.flush()
@@ -355,7 +358,12 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
             let l = recorder?.lastGood ?? manager.location
             CarPlayEvents.shared.add(on, at: Date(), lat: l?.coordinate.latitude, lng: l?.coordinate.longitude)
         }
-        if on { gate.carPlayConnected() }
+        if on {
+            gate.carPlayConnected()
+            Parking.shared.carReconnected(at: Date())
+        } else if running {
+            Parking.shared.parked(at: Date(), location: recorder?.lastGood ?? manager.location)
+        }
         evaluateDrive()
     }
 
@@ -430,6 +438,7 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     private func ingestRecorderFix(_ l: CLLocation) {
         guard running else { return }
+        Parking.shared.noteFix(l)
         handle(policy.fix(fix(l, src: "trk")))
     }
 
@@ -441,6 +450,7 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
             for l in locations {
                 guard l.horizontalAccuracy >= 0, l.timestamp.timeIntervalSinceNow > -120 else { continue }
                 self.lastFixAt = l.timestamp
+                Parking.shared.noteFix(l)
                 if l.horizontalAccuracy > self.policy.opt.maxAcc {
                     // 정확도 낮은 위치(기지국 변화 등)가 머무는 곳에서 멀리 나옴 → GPS로 확인
                     if let c = self.policy.stayCenter,
@@ -512,6 +522,8 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
         await CarPlayEvents.shared.flush()
         await AutoCheckin.shared.flush()
         await AutoCheckin.shared.refreshPlaces()
+        await Baro.shared.upload(wifiOnly: p.wifiOnly)
+        await Parking.shared.flush()
     }
 
     private var gpsDay = ""

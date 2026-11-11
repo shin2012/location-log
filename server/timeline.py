@@ -6,6 +6,7 @@ DB 를 읽는 부분(build)과 계산(순수 함수)을 나눠 시험하기 쉽�
 import math
 from datetime import datetime, timedelta
 
+import parking
 import timefix
 
 MERGE_KM = 0.1      # 같은 곳 (300m 였을 때 회사 옆 230m 식당 점심이 회사로 합쳐짐)
@@ -15,6 +16,7 @@ RUN_GAP = timedelta(minutes=15)
 JUMP_MPS = 70
 PATH_SRC = ("gps", "fill", "trk", "imu")
 MOVING = ("walk", "run", "bike", "car")
+PARK_AFTER = timedelta(minutes=20)   # 운전 마지막 점 뒤 이만큼 안의 주차(CarPlay 해제)를 그 운전에 붙임
 
 
 def hav_km(a, b) -> float:
@@ -111,8 +113,10 @@ def simplify(path: list, n: int = 300) -> list:
 
 
 def build_items(day0: datetime, day1: datetime, visits_raw: list[dict], pts: list[dict], acts: list[dict],
-                steps: list[dict], carplay: list[dict], places: list[dict], checkins: list[dict] | None = None) -> dict:
-    """[day0, day1) 하루 (UTC). carplay: [{event, at}] 시간순. places: 자동 체크인 장소 [{name, lat, lon, radius}]."""
+                steps: list[dict], carplay: list[dict], places: list[dict], checkins: list[dict] | None = None,
+                parks: list[dict] | None = None) -> dict:
+    """[day0, day1) 하루 (UTC). carplay: [{event, at}] 시간순. places: 자동 체크인 장소 [{name, lat, lon, radius}].
+    parks: 주차 [{ts, level, est}] — 운전 이동 끝(마지막 점 ~20분 뒤까지)에 붙임."""
     visits = merge_visits(visits_raw)
     # 떠난 시각 = 움직이기 시작한 때 (앱은 반경을 벗어난 뒤에야 알아챔)
     for v in visits:
@@ -154,6 +158,7 @@ def build_items(day0: datetime, day1: datetime, visits_raw: list[dict], pts: lis
     if on:
         sessions.append((on, day1))
     moves_km = drive_min = 0.0
+    used_parks: set[int] = set()
     for r in runs(pts, visits):
         if len(r) < 2 or r[-1]["ts"] < day0 or r[0]["ts"] >= day1:
             continue
@@ -170,9 +175,16 @@ def build_items(day0: datetime, day1: datetime, visits_raw: list[dict], pts: lis
         if drove:
             mode = "car"
         st = sum(s["steps"] for s in steps if t0 <= s["ts"] <= t1)
-        items.append({"kind": "move", "start": t0, "end": t1, "km": round(km, 2), "mode": mode, "drove": drove,
-                      "steps": st, "est": any(p["src"] == "imu" for p in r),
-                      "path": simplify([[round(p["lat"], 6), round(p["lon"], 6)] for p in r])})
+        it = {"kind": "move", "start": t0, "end": t1, "km": round(km, 2), "mode": mode, "drove": drove,
+              "steps": st, "est": any(p["src"] == "imu" for p in r),
+              "path": simplify([[round(p["lat"], 6), round(p["lon"], 6)] for p in r])}
+        if drove:
+            pk = [k for k in parks or [] if t0 <= k["ts"] <= t1 + PARK_AFTER and id(k) not in used_parks]
+            if pk:
+                k = min(pk, key=lambda k: abs((k["ts"] - t1).total_seconds()))
+                used_parks.add(id(k))
+                it["park"] = {"ts": k["ts"], "level": k["level"], "label": parking.label(k["level"]), "est": bool(k["est"])}
+        items.append(it)
         moves_km += km
         if drove:
             drive_min += (t1 - t0).total_seconds() / 60

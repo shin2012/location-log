@@ -33,6 +33,7 @@ struct TimelineItem: Decodable, Identifiable, Hashable {
     let steps: Int?
     let est: Bool?              // 터널 센서 추정 포함
     let path: [[Double]]?
+    let park: TimelinePark?     // 운전 끝 주차 층
 
     var id: String { "\(kind)-\(Int(start))" }
     var isVisit: Bool { kind == "visit" }
@@ -57,6 +58,14 @@ struct TimelineItem: Decodable, Identifiable, Hashable {
         default: return "arrow.triangle.swap"
         }
     }
+}
+
+/// 운전 끝 주차 (서버 park). level: 지상1층=0, 지하1층=-1. est = 추정(사용자가 안 고침)
+struct TimelinePark: Decodable, Hashable {
+    let ts: Double
+    let level: Int
+    let label: String
+    let est: Bool
 }
 
 /// 자동 체크인 장소 (GET autocheckin/places?all=1)

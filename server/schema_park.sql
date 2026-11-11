@@ -1,0 +1,20 @@
+-- 기압계 (iOS CMAltimeter). 층 이동·주차 층 추정용. 시각 UTC.
+-- 앱은 기압이 약 10cm(0.001 kPa) 넘게 바뀌었거나 1분 지났을 때만 저장해 올림.
+CREATE TABLE IF NOT EXISTS day_baro (
+  ts  DATETIME(3) NOT NULL COMMENT 'UTC',
+  kpa DOUBLE NOT NULL COMMENT '기압 kPa',
+  PRIMARY KEY (ts)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='하루 종일 기록 기압';
+
+-- 주차 (CarPlay 해제 순간). level: 지상1층=0, 2층=1, 지하1층=-1 …
+CREATE TABLE IF NOT EXISTS park (
+  ts         DATETIME(3) NOT NULL COMMENT 'UTC, CarPlay 해제',
+  lat        DOUBLE NULL,
+  lon        DOUBLE NULL,
+  dh         DOUBLE NOT NULL COMMENT '지상 도로(ref_ts) 대비 높이 차 m',
+  ref_ts     DATETIME(3) NULL COMMENT '기준: 마지막으로 빠르게 달린 시각',
+  level_est  SMALLINT NOT NULL COMMENT '앱이 알림 낼 때 추정한 층',
+  level_user SMALLINT NULL COMMENT '사용자가 고치거나 맞다고 한 층',
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (ts)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='주차 층';

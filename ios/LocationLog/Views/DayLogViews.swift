@@ -233,6 +233,8 @@ struct DriveSettingsView: View {
     @ObservedObject var settings = DaySettings.shared
     @ObservedObject var carplay = CarPlayWatcher.shared
     @ObservedObject var cpEvents = CarPlayEvents.shared
+    @ObservedObject var parking = Parking.shared
+    @ObservedObject var baro = Baro.shared
     private var p: Binding<DayPrefs> { $settings.prefs }
 
     var body: some View {
@@ -252,6 +254,17 @@ struct DriveSettingsView: View {
                 if let e = cpEvents.lastError { Text(e).font(.footnote).foregroundStyle(.orange) }
             } header: { Text("CarPlay") } footer: {
                 Text("CarPlay에 연결되면 '내가 운전', 연결 없이 차로 움직이면 '차량 이동'으로 구분합니다.")
+            }
+            Section {
+                Toggle("주차 층 알림", isOn: p.parkNotify)
+                LabeledContent("기압계", value: !Baro.available ? "이 기기에 없음"
+                               : baro.latest.map { String(format: "%.1f hPa", $0.kpa * 10) } ?? (logger.running ? "기다리는 중" : "하루 기록 꺼짐"))
+                if let l = parking.lastPark {
+                    LabeledContent("마지막 주차", value: "\(ParkModel.label(l.level)) · 도로 대비 \(String(format: "%+.1f", l.dh))m · \(Fmt.hm(l.ts))")
+                }
+                if let e = parking.lastError ?? baro.lastError { Text(e).font(.footnote).foregroundStyle(.orange) }
+            } header: { Text("주차 층") } footer: {
+                Text("CarPlay 연결이 끊기면(주차) 마지막으로 도로를 달리던 곳과 지금의 기압 차로 몇 층인지 추정해 1분 뒤 알려 줍니다(1분 안에 다시 연결되면 취소). 알림을 길게 눌러 '한 층 위·아래'로 고치거나 타임라인에서 층을 누르면, 그 주차장(150m 안)의 층 높이를 배워 다음부터 맞춥니다. 기압은 하루 기록이 켜져 있는 동안 계속 저장해 층 이동 분석에도 씁니다.")
             }
             Section {
                 Label("단축어 앱 › 자동화 › 새로운 자동화 › CarPlay", systemImage: "1.circle")

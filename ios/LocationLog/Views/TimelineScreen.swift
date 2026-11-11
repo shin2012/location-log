@@ -93,8 +93,13 @@ struct TimelineScreen: View {
             Section {
                 if let items = data?.items, !items.isEmpty {
                     ForEach(items) { it in
-                        Button { select(it) } label: { TimelineRow(item: it) }
-                            .buttonStyle(.plain)
+                        HStack(spacing: 8) {
+                            Button { select(it) } label: { TimelineRow(item: it) }
+                                .buttonStyle(.plain)
+                            if let pk = it.park {
+                                ParkMenu(park: pk) { lv in await setPark(pk, lv) }
+                            }
+                        }
                             .listRowBackground(selected == it ? Color.accentColor.opacity(0.12) : nil)
                             .contextMenu {
                                 Button("자세히", systemImage: "info.circle") { detail = it }
@@ -216,9 +221,59 @@ struct TimelineScreen: View {
         }
     }
 
+    /// 주차 층 고침 (nil = 추정으로 되돌림) → 서버 반영 뒤 다시 불러옴
+    private func setPark(_ pk: TimelinePark, _ level: Int?) async {
+        await Parking.shared.setLevel(ts: pk.ts, level: level)
+        await load()
+    }
+
     private func fit(_ cs: [CLLocationCoordinate2D]) {
         guard !cs.isEmpty else { return }
         fitReq = MapFit(key: "\(key)-\(selected?.id ?? "all")", coords: cs)
+    }
+}
+
+/// 운전 끝 주차 층 표시 + 눌러서 고치기
+struct ParkMenu: View {
+    let park: TimelinePark
+    let set: (Int?) async -> Void
+    @State private var busy = false
+
+    private static let levels = Array((-6...4).reversed())   // 5F … B6
+
+    var body: some View {
+        Menu {
+            if park.est {
+                Button("\(park.label) 맞아요", systemImage: "checkmark") { run(park.level) }
+            }
+            Section("실제 주차 층") {
+                ForEach(Self.levels, id: \.self) { lv in
+                    Button { run(lv) } label: {
+                        if lv == park.level && !park.est { Label(ParkModel.label(lv), systemImage: "checkmark") } else { Text(ParkModel.label(lv)) }
+                    }
+                }
+            }
+            if !park.est {
+                Button("추정으로 되돌리기", systemImage: "arrow.uturn.backward") { run(nil) }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                if busy { ProgressView().controlSize(.mini) } else { Image(systemName: "parkingsign.circle.fill") }
+                Text(park.label).fontWeight(.semibold).monospacedDigit()
+                if park.est { Text("추정").font(.caption2) }
+            }
+            .font(.subheadline)
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .foregroundStyle(park.est ? Color.secondary : Color.white)
+            .background(park.est ? AnyShapeStyle(.quaternary) : AnyShapeStyle(Color.blue), in: Capsule())
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel("주차 \(park.label)" + (park.est ? " 추정, 눌러서 고치기" : ""))
+    }
+
+    private func run(_ lv: Int?) {
+        busy = true
+        Task { await set(lv); busy = false }
     }
 }
 
@@ -292,6 +347,9 @@ struct TimelineDetailSheet: View {
                         if let km = item.km { LabeledContent("거리", value: String(format: "%.2fkm", km)) }
                         if let s = item.steps { LabeledContent("걸음", value: s.formatted()) }
                         LabeledContent("운전 판단", value: item.drove == true ? "CarPlay 연결 — 내가 운전" : item.mode == "car" ? "CarPlay 없음 — 차량 이동" : "—")
+                        if let pk = item.park {
+                            LabeledContent("주차", value: pk.label + (pk.est ? " (기압 추정)" : " (확인함)"))
+                        }
                         LabeledContent("경로 점", value: "\(item.coords.count)개" + (item.est == true ? " (터널 센서 추정 포함)" : ""))
                     }
                 }

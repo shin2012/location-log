@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pymysql
 
+import parking as PK
 import timeline as TL
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -368,9 +369,12 @@ def day_timeline(date: str):
                     "WHERE FSQ_UNIXTIME BETWEEN UNIX_TIMESTAMP(%s) - 43200 AND UNIX_TIMESTAMP(%s) ORDER BY FSQ_UNIXTIME",
                     (a, b))
         cks = [{**c, "lat": float(c["lat"]), "lon": float(c["lon"])} for c in cur.fetchall()]
-    out = TL.build_items(a, b, vs, pts, acts, steps, cps, places, cks)
+        parks = _parks(cur, a - timedelta(hours=1), b + timedelta(hours=1))
+    out = TL.build_items(a, b, vs, pts, acts, steps, cps, places, cks, parks)
     for it in out["items"]:
         it["start"], it["end"] = dt_to_ms(it["start"]), dt_to_ms(it["end"])
+        if "park" in it:
+            it["park"]["ts"] = dt_to_ms(it["park"]["ts"])
     return {"date": date, **out}
 
 
@@ -431,6 +435,104 @@ def carplay(body: CarPlayIn):
     except Exception as e:
         raise HTTPException(502, f"전달 실패: {str(e)[:120]}")
     return {"ok": True, "id": out.get("id"), "duplicate": bool(out.get("duplicate"))}
+
+
+# ─── 기압·주차 층 (1.4.0) ───
+class BaroIn(BaseModel):
+    ts: float   # epoch ms
+    kpa: float
+
+
+class BaroBody(BaseModel):
+    samples: list[BaroIn]
+
+
+@app.post("/api/day/baro")
+def day_baro(body: BaroBody):
+    """기압 (iOS CMAltimeter, kPa). ts 기준 REPLACE"""
+    rows = [(ms_to_dt(x.ts), x.kpa) for x in body.samples if 30 <= x.kpa <= 120]
+    if rows:
+        with db() as cur:
+            cur.executemany("REPLACE INTO day_baro (ts, kpa) VALUES (%s,%s)", rows)
+    return {"ok": True, "n": len(rows)}
+
+
+def _park_cal(cur, exclude=None) -> list[dict]:
+    cur.execute("SELECT ts, lat, lon, dh, level_user AS level FROM park WHERE level_user IS NOT NULL AND lat IS NOT NULL")
+    return [c for c in cur.fetchall() if c["ts"] != exclude]
+
+
+def _parks(cur, a: datetime, b: datetime) -> list[dict]:
+    """[a, b) 주차 — 고친 층이 없으면 지금 보정값으로 다시 추정 (보정이 쌓이면 지난 기록도 바뀜)"""
+    cur.execute("SELECT ts, lat, lon, dh, level_est, level_user FROM park WHERE ts >= %s AND ts < %s ORDER BY ts", (a, b))
+    rows = cur.fetchall()
+    if not rows:
+        return []
+    cal = _park_cal(cur)
+    out = []
+    for r in rows:
+        if r["level_user"] is not None:
+            lv, est = r["level_user"], False
+        elif r["lat"] is not None:
+            lv, est = PK.estimate(r["dh"], r["lat"], r["lon"], cal), True
+        else:
+            lv, est = r["level_est"], True
+        out.append({"ts": r["ts"], "level": lv, "est": est, "dh": r["dh"]})
+    return out
+
+
+class ParkIn(BaseModel):
+    ts: float                    # epoch ms, CarPlay 해제
+    lat: float | None = None
+    lon: float | None = None
+    dh: float
+    ref_ts: float | None = None
+    level: int                   # 앱이 낸 추정
+
+
+@app.post("/api/park")
+def park_add(body: ParkIn):
+    """주차 기록 (앱이 CarPlay 해제 1분 뒤 보냄). 다시 보내도 고친 층은 그대로."""
+    ts = ms_to_dt(body.ts)
+    with db() as cur:
+        cur.execute("INSERT INTO park (ts, lat, lon, dh, ref_ts, level_est) VALUES (%s,%s,%s,%s,%s,%s) "
+                    "ON DUPLICATE KEY UPDATE lat=VALUES(lat), lon=VALUES(lon), dh=VALUES(dh), ref_ts=VALUES(ref_ts), "
+                    "level_est=VALUES(level_est)",
+                    (ts, body.lat, body.lon, body.dh, None if body.ref_ts is None else ms_to_dt(body.ref_ts), body.level))
+        lv = PK.estimate(body.dh, body.lat, body.lon, _park_cal(cur, ts)) if body.lat is not None else body.level
+    return {"ok": True, "level": lv, "label": PK.label(lv)}
+
+
+class ParkPatch(BaseModel):
+    level: int | None = None     # None = 고친 것 취소 (다시 추정)
+
+
+@app.patch("/api/park/{ts_ms}")
+def park_patch(ts_ms: int, body: ParkPatch):
+    if body.level is not None and not (PK.LEVEL_MIN <= body.level <= PK.LEVEL_MAX):
+        raise HTTPException(400, "층 범위 밖")
+    with db() as cur:
+        # 앱이 보낸 ts 와 DB 값이 ms 반올림으로 1ms 어긋날 수 있음
+        n = cur.execute("UPDATE park SET level_user=%s WHERE ts BETWEEN %s AND %s",
+                        (body.level, ms_to_dt(ts_ms - 2), ms_to_dt(ts_ms + 2)))
+    if not n:
+        raise HTTPException(404, "주차 기록 없음")
+    return {"ok": True}
+
+
+@app.get("/api/park/calib")
+def park_calib():
+    """사용자가 고친(확정한) 주차 — 앱이 통신 없이도 같은 규칙으로 추정하도록"""
+    with db() as cur:
+        return [{"lat": c["lat"], "lon": c["lon"], "dh": round(c["dh"], 2), "level": c["level"]} for c in _park_cal(cur)]
+
+
+@app.get("/api/park")
+def park_list(days: int = 30):
+    a = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=max(1, min(days, 400)))
+    with db() as cur:
+        rows = _parks(cur, a, datetime(2100, 1, 1))
+    return [{**r, "ts": dt_to_ms(r["ts"]), "label": PK.label(r["level"]), "dh": round(r["dh"], 2)} for r in rows]
 
 
 # ─── 자동 체크인 (IFTTT·람다 대체) ───

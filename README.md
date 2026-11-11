@@ -25,6 +25,8 @@
 | `day_visit` | 하루 종일 기록 머문 곳: arrive(PK), depart, lat, lon, updated_at(데일리요섭 변경 감지) |
 | `day_act` | 이동 방식이 바뀐 시각: ts(UTC, PK), act(stationary/walk/run/bike/car), conf(0~2) — iOS 동작 기록, 업로드 때마다 7일치 안에서 지난 커서부터 다시 조회 |
 | `day_step` | 1분 걸음: ts(UTC 분 시작, PK), steps, dist_m — iOS 만보계(CMPedometer), 0 걸음 분도 올림. 처음 켜면 2일 거슬러, 한 번에 최대 24시간 |
+| `day_baro` | 기압: ts(UTC, PK), kpa — iOS 기압계(CMAltimeter), 약 8cm 넘게 바뀌거나 1분마다. 층 이동 분석용 — `server/schema_park.sql` |
+| `park` | 주차: ts(CarPlay 해제, PK), lat, lon, dh(지상 도로 대비 m), ref_ts, level_est, level_user(사용자 확정) — level 지상1층=0·지하1층=-1 |
 
 <details><summary>API (앱은 <code>/app-api/…</code> 로 부름 = <code>/api/…</code>, 모두 Bearer 토큰)</summary>
 
@@ -101,3 +103,11 @@ flowchart LR
 
 ## 타임라인 탭 다시 누르기 (1.3.1)
 - '타임라인' 탭(아이패드 사이드바 포함)을 이미 고른 상태에서 다시 누르면(더블탭) 무조건 오늘 날짜로 — 열린 시트·지도 화면 닫고, 이미 오늘이면 새로 불러옴. `AppTab.reselected` 알림
+
+## 주차 층 (1.4.0)
+- 하루 기록이 켜져 있으면 기압계(CMAltimeter)를 계속 받음: 최근 2시간은 메모리(주차 계산), 파일·서버(`POST /api/day/baro`)엔 0.001 kPa 넘게 바뀌거나 1분마다.
+- CarPlay 해제 = 주차. 마지막으로 5 m/s 이상·정확도 30m 안으로 달린 시각(지상 도로, 30분 안)의 기압과 비교 → 높이 차 dh → 층 추정 → 1분 뒤 알림(맞아요 / 한 층 위 / 한 층 아래). 1분 안에 CarPlay 다시 연결되면 취소.
+- 추정 규칙 = `server/parking.py` ↔ `ios/LocationLog/ParkModel.swift` (같은 규칙, 바꾸면 둘 다): dh ≈ a·level + b, 사용자가 확정한 주차 중 150m 안 것으로 장소별 a(층 높이)·b(입구 높이) 맞춤, 없으면 전체 층 높이 중앙값(처음 3.2m).
+- 서버 `POST /api/park`, `PATCH /api/park/{ts_ms}` {level|null}, `GET /api/park/calib`, `GET /api/park`. 타임라인 운전 이동에 `park` {ts, level, label, est} — 확정 안 한 건 그때그때 최신 보정으로 다시 추정.
+- 시험: `python3 tests/test_parking.py`, `swiftc ios/LocationLog/ParkModel.swift tools/parktest/main.swift -o /tmp/pt && /tmp/pt`
+
