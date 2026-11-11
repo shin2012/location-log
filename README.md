@@ -28,6 +28,7 @@
 | `day_baro` | 기압: ts(UTC, PK), kpa — iOS 기압계(CMAltimeter), 약 8cm 넘게 바뀌거나 1분마다. 층 이동 분석용 — `server/schema_park.sql` |
 | `day_wifi` | 연결 공유기가 바뀐 시각: ts(PK), bssid(공유기 고유번호, NULL=연결 없음), ssid — 층 판정 보조 (1.5.0) |
 | `floor_cal` | 사용자가 확정한 층 구간: ts(구간 시작, PK), lat, lon, dh, level, ap(BSSID 앞 5바이트) (1.5.0) |
+| `day_hk` | 건강 앱 기록: uuid(PK), kind(steps=워치 걸음만 / flights=오른 층수), start, end, value, device(watch/phone) (1.6.0) |
 | `park` | 주차: ts(CarPlay 해제, PK), lat, lon, dh(지상 도로 대비 m), ref_ts, level_est, level_user(사용자 확정) — level 지상1층=0·지하1층=-1 |
 
 <details><summary>API (앱은 <code>/app-api/…</code> 로 부름 = <code>/api/…</code>, 모두 Bearer 토큰)</summary>
@@ -119,4 +120,9 @@ flowchart LR
 - 층 번호: 머문 곳에 들어온 순간 = 지상 1층(차로 와서 주차했으면 주차 높이) + 층 이동 합 → parking 모델(장소 150m, 처음 층 높이 3.5m). 사용자 확정 `PUT /api/floor` → `floor_cal`.
 - 공유기(BSSID, `WifiLog.swift`, 'Wi-Fi 정보 접근' 권한 `Config/LocationLog.entitlements`)는 보조: 같은 공유기(앞 5바이트)에서 같은 층으로 2번 이상 확정했을 때만 그 층.
 - 타임라인 머문 곳 `floors` [{start, end, level, label, est, via, dh, ap}] — 층 이동이 있을 때만. 앱에서 층을 눌러 고침.
+
+## 폰 두고 다닐 때 — 워치 (1.6.0)
+- `HealthHistory.swift`: HealthKit anchored query 로 워치 걸음·오른 층수(flightsClimbed) → `POST /api/day/health` (uuid REPLACE, 지운 것 삭제) → `day_hk`. 잠금 중엔 못 읽음 → 다음 업로드에 다시. 권한 = 건강 읽기(entitlement healthkit), 설정 '워치 걸음·계단'.
+- `floors.excursions`: 워치 오른 층 + 그 시각 폰 걸음 없음 + 기압 층 이동과 안 겹침 → 그때 폰 층 + 오른 층수 구간(src=watch). 돌아온 시각 = 오른 뒤 멈췄다 다시 걷기 시작한 때(없으면 폰이 움직인 때). 건강 앱엔 내린 층·엘리베이터가 없음.
+- `floors.away`: 폰 놓여 있고 워치로 걸은 구간(30분 안 끊김 합침, 50걸음+) → 타임라인 '폰 두고 이동'.
 

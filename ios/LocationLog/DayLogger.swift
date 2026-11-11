@@ -201,6 +201,7 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
         if on {
             refreshBattery()
             if running && settings.prefs.parkNotify && settings.prefs.driveRecord { Parking.shared.requestPermission() }
+            if running && settings.prefs.watchHealth { HealthHistory.shared.requestPermission() }
             Task { await upload(force: true) }
         } else {
             store.flush()
@@ -526,6 +527,7 @@ final class DayLogger: NSObject, ObservableObject, CLLocationManagerDelegate {
         await AutoCheckin.shared.refreshPlaces()
         await Baro.shared.upload(wifiOnly: p.wifiOnly)
         await WifiLog.shared.upload(wifiOnly: p.wifiOnly)
+        await HealthHistory.shared.upload(wifiOnly: p.wifiOnly)
         await Parking.shared.flush()
     }
 

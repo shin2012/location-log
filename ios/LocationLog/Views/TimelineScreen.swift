@@ -107,6 +107,11 @@ struct TimelineScreen: View {
                         ForEach(it.floors ?? []) { f in
                             FloorRow(floor: f) { lv in await setFloor(it, f, lv) }
                         }
+                        ForEach(it.away ?? []) { w in
+                            Label("폰 두고 이동 " + Fmt.hm(w.start) + "–" + Fmt.hm(w.end) + " · 워치 \(w.steps.formatted())걸음", systemImage: "applewatch")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .padding(.leading, 20)
+                        }
                     }
                 } else if loading {
                     HStack { Spacer(); ProgressView(); Spacer() }
@@ -301,13 +306,14 @@ struct FloorRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: floor.via == nil ? "building.2" : floor.via == "elevator" ? "arrow.up.arrow.down.square" : "figure.stairs")
+            Image(systemName: floor.via == nil ? "building.2" : floor.via == "elevator" ? "arrow.up.arrow.down.square"
+                  : floor.via == "back" ? "arrow.uturn.backward" : floor.src == "watch" ? "applewatch" : "figure.stairs")
                 .foregroundStyle(.secondary)
                 .frame(width: 28)
             VStack(alignment: .leading, spacing: 2) {
                 Text(Fmt.hm(floor.start) + "–" + Fmt.hm(floor.end) + " · " + Fmt.durKo(floor.end - floor.start))
                     .font(.subheadline).monospacedDigit()
-                if let v = floor.viaLabel { Text(v + "로 이동").font(.caption).foregroundStyle(.secondary) }
+                if let v = floor.viaLabel { Text(v).font(.caption).foregroundStyle(.secondary) }
             }
             Spacer(minLength: 0)
             LevelMenu(level: floor.level, label: floor.label, est: floor.est, symbol: "building.2.fill",

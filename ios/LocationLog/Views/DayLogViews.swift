@@ -236,6 +236,7 @@ struct DriveSettingsView: View {
     @ObservedObject var parking = Parking.shared
     @ObservedObject var baro = Baro.shared
     @ObservedObject var wifi = WifiLog.shared
+    @ObservedObject var health = HealthHistory.shared
     private var p: Binding<DayPrefs> { $settings.prefs }
 
     var body: some View {
@@ -263,10 +264,16 @@ struct DriveSettingsView: View {
                 if let l = parking.lastPark {
                     LabeledContent("마지막 주차", value: "\(ParkModel.label(l.level)) · 도로 대비 \(String(format: "%+.1f", l.dh))m · \(Fmt.hm(l.ts))")
                 }
+                Toggle("워치 걸음·계단 (건강 앱)", isOn: p.watchHealth)
+                    .onChange(of: settings.prefs.watchHealth) { _, on in if on { HealthHistory.shared.requestPermission() } }
+                if settings.prefs.watchHealth {
+                    LabeledContent("건강 앱", value: !HealthHistory.available ? "이 기기에 없음"
+                                   : health.lastUploadAt.map { "올림 " + Fmt.hm($0.timeIntervalSince1970 * 1000) + " · 새 기록 \(health.lastCount)개" } ?? "아직 안 올림")
+                }
                 LabeledContent("연결 공유기", value: wifi.current?.bssid.map { (wifi.current?.ssid ?? "") + " · " + $0 } ?? "없음")
-                if let e = parking.lastError ?? baro.lastError ?? wifi.lastError { Text(e).font(.footnote).foregroundStyle(.orange) }
+                if let e = parking.lastError ?? baro.lastError ?? wifi.lastError ?? health.lastError { Text(e).font(.footnote).foregroundStyle(.orange) }
             } header: { Text("주차 층 · 층 이동") } footer: {
-                Text("CarPlay 연결이 끊기면(주차) 마지막으로 도로를 달리던 곳과 지금의 기압 차로 몇 층인지 추정해 1분 뒤 알려 줍니다(1분 안에 다시 연결되면 취소). 알림을 길게 눌러 '한 층 위·아래'로 고치거나 타임라인에서 층을 누르면, 그 주차장(150m 안)의 층 높이를 배워 다음부터 맞춥니다. 기압은 하루 기록이 켜져 있는 동안 계속 저장해, 머문 곳 안에서 엘리베이터·계단으로 층을 옮기면 타임라인에 층 구간으로 보여 줍니다. 연결된 공유기 고유번호는 층 확인용 보조로만 씁니다(같은 공유기에서 두 번 이상 같은 층으로 확정했을 때).")
+                Text("CarPlay 연결이 끊기면(주차) 마지막으로 도로를 달리던 곳과 지금의 기압 차로 몇 층인지 추정해 1분 뒤 알려 줍니다(1분 안에 다시 연결되면 취소). 알림을 길게 눌러 '한 층 위·아래'로 고치거나 타임라인에서 층을 누르면, 그 주차장(150m 안)의 층 높이를 배워 다음부터 맞춥니다. 기압은 하루 기록이 켜져 있는 동안 계속 저장해, 머문 곳 안에서 엘리베이터·계단으로 층을 옮기면 타임라인에 층 구간으로 보여 줍니다. 연결된 공유기 고유번호는 층 확인용 보조로만 씁니다(같은 공유기에서 두 번 이상 같은 층으로 확정했을 때). 폰을 두고 다닐 때는 Apple Watch가 건강 앱에 남긴 걸음·계단으로 오른 층수로 '폰 두고 이동'과 계단 층 이동을 추정합니다(엘리베이터는 워치가 세지 않음).")
             }
             Section {
                 Label("단축어 앱 › 자동화 › 새로운 자동화 › CarPlay", systemImage: "1.circle")

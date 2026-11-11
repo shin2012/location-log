@@ -116,7 +116,7 @@ def simplify(path: list, n: int = 300) -> list:
 def build_items(day0: datetime, day1: datetime, visits_raw: list[dict], pts: list[dict], acts: list[dict],
                 steps: list[dict], carplay: list[dict], places: list[dict], checkins: list[dict] | None = None,
                 parks: list[dict] | None = None, baro: list[dict] | None = None, floor_cal: list[dict] | None = None,
-                wifi: list[dict] | None = None) -> dict:
+                wifi: list[dict] | None = None, hk: list[dict] | None = None) -> dict:
     """[day0, day1) 하루 (UTC). carplay: [{event, at}] 시간순. places: 자동 체크인 장소 [{name, lat, lon, radius}].
     parks: 주차 [{ts, level, est, dh}] — 운전 이동 끝(마지막 점 ~20분 뒤까지)에 붙임.
     baro/floor_cal/wifi: 머문 곳 안 층 구간 (floors.py). 주차 직후 머문 곳은 주차 높이에서 시작."""
@@ -151,13 +151,17 @@ def build_items(day0: datetime, day1: datetime, visits_raw: list[dict], pts: lis
               "name": ck["name"] if ck else (pl["name"] if pl else None), "checkin": bool(ck),
               "open": bool(v.get("open")),
               "minutes": round((e - s).total_seconds() / 60)}
-        if hs:
+        if hs or hk:
             pk = [k for k in parks or [] if v["start"] - PARK_AFTER <= k["ts"] <= v["start"] + timedelta(minutes=5)
                   and k.get("dh") is not None]
             base = pk[-1]["dh"] if pk else 0.0
-            segs = floors.segments(dict(v, start=s, end=e), hs, steps, floor_cal or [], wifi, base_dh=base)
+            segs = floors.segments(dict(v, start=s, end=e), hs, steps, floor_cal or [], wifi, base_dh=base, hk=hk)
             if segs:
                 it["floors"] = segs
+        if hk:
+            aw = floors.away(dict(v, start=s, end=e), steps, hk)
+            if aw:
+                it["away"] = aw
         items.append(it)
     # 운전 = CarPlay 연결 구간
     sessions, on = [], None

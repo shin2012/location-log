@@ -101,6 +101,47 @@ def test_real_20261111():
     assert segs[1]["start"].strftime("%H:%M") == "05:02"
 
 
+def _real():
+    d = json.loads((Path(__file__).parent / "data" / "floors_20261111.json").read_text())
+    baro = [{"ts": datetime.fromisoformat(t), "kpa": k} for t, k in d["baro"]]
+    steps = [{"ts": datetime.fromisoformat(t), "steps": n} for t, n in d["steps"]]
+    v = {"start": datetime(2026, 11, 11, 4, 59, 39), "end": datetime(2026, 11, 11, 7, 15), "lat": 37.5, "lon": 127.0}
+    return v, F.heights(baro), steps
+
+
+def test_watch_excursion_real():
+    """실제 상황: 폰은 2층 사무실에 두고 워치만 차고 3층 다녀옴 (14:31 계단, 14:49 돌아옴). 워치 기록은 흉내"""
+    v, hs, steps = _real()
+    U = lambda hm: datetime(2026, 11, 11, int(hm[:2]) - 9, int(hm[3:5]), int(hm[6:8]) if len(hm) > 5 else 0)
+    hk = [
+        {"kind": "steps", "device": "watch", "start": U("14:30"), "end": U("14:32"), "value": 70},
+        {"kind": "flights", "device": "watch", "start": U("14:31:00"), "end": U("14:31:40"), "value": 1},
+        {"kind": "steps", "device": "watch", "start": U("14:40"), "end": U("14:41"), "value": 3},   # 서서 얘기
+        {"kind": "steps", "device": "watch", "start": U("14:49"), "end": U("14:51"), "value": 60},  # 돌아옴
+        {"kind": "flights", "device": "phone", "start": U("15:00"), "end": U("15:01"), "value": 1},  # 폰 기록은 무시
+    ]
+    segs = F.segments(v, hs, steps, [], base_dh=0.44, hk=hk)
+    got = [(s["label"], (s["start"] + timedelta(hours=9)).strftime("%H:%M"), s.get("src")) for s in segs]
+    assert got == [("1F", "13:59", None), ("2F", "14:02", None), ("3F", "14:31", "watch"), ("2F", "14:49", "watch")], got
+    aw = F.away(v, steps, hk)
+    assert len(aw) == 1 and aw[0]["steps"] >= 120, aw
+    # 폰도 같이 움직였으면(폰 걸음 있음) 워치 층은 안 씀 — 기압이 맡음
+    steps2 = steps + [{"ts": U("14:31"), "steps": 40}]
+    assert [s["label"] for s in F.segments(v, hs, steps2, [], base_dh=0.44, hk=hk)] == ["1F", "2F"]
+
+
+def test_watch_only_no_baro_event():
+    """기압 층 이동 없는 머묾에서도 워치 계단만으로 나뉨, 확정하면 그 층"""
+    hs = series([(7200, 0.5)])
+    t = T0 + timedelta(minutes=30)
+    hk = [{"kind": "flights", "device": "watch", "start": t, "end": t + timedelta(seconds=40), "value": 2},
+          {"kind": "steps", "device": "watch", "start": t + timedelta(minutes=20), "end": t + timedelta(minutes=21), "value": 40}]
+    segs = F.segments(V, hs, [], [], hk=hk)
+    assert [s["label"] for s in segs] == ["1F", "3F", "1F"], segs
+    cal = [{"ts": segs[1]["start"], "lat": 37.5, "lon": 127.0, "dh": segs[1]["dh"], "level": 3, "ap": None}]
+    assert F.segments(V, hs, [], cal, hk=hk)[1]["label"] == "4F"
+
+
 if __name__ == "__main__":
     for k, f in list(globals().items()):
         if k.startswith("test_"):

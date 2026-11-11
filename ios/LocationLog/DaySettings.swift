@@ -30,6 +30,7 @@ struct DayPrefs: Codable, Equatable {
     var driveRecord = true        // 차로 이동 + 충전 중이면 1초 기록(센서 터널 추정 포함)
     var carplaySend = true        // CarPlay 연결·해제를 서버로 (단축어 대신)
     var parkNotify = true         // CarPlay 해제 때 기압으로 주차 층 추정 → 알림
+    var watchHealth = true        // 건강 앱에서 워치 걸음·오른 층수 (폰 두고 다닐 때 층 이동)
     // 업로드
     var uploadMinutes = 30
     var wifiOnly = false
@@ -56,6 +57,7 @@ struct DayPrefs: Codable, Equatable {
         showIndicator = v(.showIndicator, z.showIndicator); uploadMinutes = v(.uploadMinutes, z.uploadMinutes)
         chargePrecise = v(.chargePrecise, z.chargePrecise); driveRecord = v(.driveRecord, z.driveRecord)
         carplaySend = v(.carplaySend, z.carplaySend); parkNotify = v(.parkNotify, z.parkNotify)
+        watchHealth = v(.watchHealth, z.watchHealth)
         wifiOnly = v(.wifiOnly, z.wifiOnly); quietOn = v(.quietOn, z.quietOn)
         quietStart = v(.quietStart, z.quietStart); quietEnd = v(.quietEnd, z.quietEnd)
         excluded = v(.excluded, z.excluded); keepDays = v(.keepDays, z.keepDays)

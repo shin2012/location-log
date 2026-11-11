@@ -381,12 +381,14 @@ def day_timeline(date: str):
         wifi = cur.fetchall()
         cur.execute("SELECT ts, lat, lon, dh, level, ap FROM floor_cal")
         fcal = cur.fetchall()
-    out = TL.build_items(a, b, vs, pts, acts, steps, cps, places, cks, parks, baro, fcal, wifi)
+        cur.execute("SELECT kind, start, end, value, device FROM day_hk WHERE end >= %s AND start < %s ORDER BY start", (a, b))
+        hk = cur.fetchall()
+    out = TL.build_items(a, b, vs, pts, acts, steps, cps, places, cks, parks, baro, fcal, wifi, hk)
     for it in out["items"]:
         it["start"], it["end"] = dt_to_ms(it["start"]), dt_to_ms(it["end"])
         if "park" in it:
             it["park"]["ts"] = dt_to_ms(it["park"]["ts"])
-        for f in it.get("floors", []):
+        for f in it.get("floors", []) + it.get("away", []):
             f["start"], f["end"] = dt_to_ms(f["start"]), dt_to_ms(f["end"])
     return {"date": date, **out}
 
@@ -488,6 +490,33 @@ def day_wifi(body: WifiBody):
         with db() as cur:
             cur.executemany("REPLACE INTO day_wifi (ts, bssid, ssid) VALUES (%s,%s,%s)", rows)
     return {"ok": True, "n": len(rows)}
+
+
+class HkItem(BaseModel):
+    uuid: str = Field(max_length=36)
+    kind: str = Field(max_length=8)      # steps | flights
+    start: float
+    end: float
+    value: float
+    device: str = Field(default="other", max_length=8)
+
+
+class HkBody(BaseModel):
+    items: list[HkItem] = []
+    deleted: list[str] = []
+
+
+@app.post("/api/day/health")
+def day_health(body: HkBody):
+    """건강 앱 워치 걸음·오른 층수 (1.6). uuid 기준 REPLACE, 지워진 건 지움"""
+    rows = [(x.uuid, x.kind, ms_to_dt(x.start), ms_to_dt(x.end), x.value, x.device)
+            for x in body.items if x.kind in ("steps", "flights")]
+    with db() as cur:
+        if rows:
+            cur.executemany("REPLACE INTO day_hk (uuid, kind, start, end, value, device) VALUES (%s,%s,%s,%s,%s,%s)", rows)
+        for u in body.deleted:
+            cur.execute("DELETE FROM day_hk WHERE uuid=%s", (u,))
+    return {"ok": True, "n": len(rows), "deleted": len(body.deleted)}
 
 
 class FloorFix(BaseModel):

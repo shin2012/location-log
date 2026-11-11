@@ -42,3 +42,15 @@ CREATE TABLE IF NOT EXISTS floor_cal (
 
 ALTER TABLE day_step ADD COLUMN IF NOT EXISTS floors_up TINYINT UNSIGNED NULL COMMENT '만보계 계단 오른 층수',
                      ADD COLUMN IF NOT EXISTS floors_down TINYINT UNSIGNED NULL COMMENT '만보계 계단 내린 층수';
+
+-- 1.6.0: 건강 앱 (워치 걸음·오른 층수). 폰을 두고 다닐 때 층 이동
+CREATE TABLE IF NOT EXISTS day_hk (
+  uuid   CHAR(36) NOT NULL COMMENT 'HealthKit 기록 uuid',
+  kind   VARCHAR(8) NOT NULL COMMENT 'steps | flights',
+  start  DATETIME(3) NOT NULL COMMENT 'UTC',
+  end    DATETIME(3) NOT NULL,
+  value  DOUBLE NOT NULL COMMENT '걸음 수 / 오른 층수',
+  device VARCHAR(8) NOT NULL DEFAULT 'other' COMMENT 'watch | phone | other',
+  PRIMARY KEY (uuid),
+  KEY (start)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='건강 앱 걸음·층';
