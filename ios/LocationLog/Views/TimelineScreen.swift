@@ -22,7 +22,8 @@ struct TimelineScreen: View {
     @State private var picking = false
     @State private var showPoints = false
     @State private var fitReq: MapFit?
-    @State private var offlineAt: Date?          // 서버에 못 붙어 저장본을 보여 주는 중
+    @State private var offlineAt: Date?          // 서버 보완 정보를 못 받아 저장본(또는 기기 기록만)으로 계산함
+    @State private var netFail = true            // true = 통신 안 됨, false = 서버 응답 문제
 
     private var key: String { DayLogStore.dayFmt.string(from: day) }
     private var isToday: Bool { Calendar.current.isDateInToday(day) }
@@ -70,11 +71,14 @@ struct TimelineScreen: View {
         List {
             if let at = offlineAt {
                 Section {
-                    Label(at == .distantPast
-                          ? "서버에 연결하지 못해 기기 기록만으로 계산했습니다. 장소 이름 등은 연결되면 붙습니다."
-                          : "서버에 연결하지 못해 기기 기록과 \(Fmt.hm(at.timeIntervalSince1970 * 1000))에 받은 장소 이름 등으로 계산했습니다.",
-                          systemImage: "wifi.slash")
-                        .font(.footnote).foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label((netFail ? "서버에 연결하지 못해 " : "서버 보완 정보를 받지 못해 ")
+                              + (at == .distantPast ? "기기 기록만으로 계산했습니다. 장소 이름 등은 받으면 붙습니다."
+                                 : "기기 기록과 \(Fmt.hm(at.timeIntervalSince1970 * 1000))에 받은 장소 이름 등으로 계산했습니다."),
+                              systemImage: netFail ? "wifi.slash" : "exclamationmark.triangle")
+                        if !netFail, let e = error { Text(e).font(.caption2).foregroundStyle(.secondary) }
+                    }
+                    .font(.footnote).foregroundStyle(.orange)
                 }
             }
             if logger.running && isToday {
@@ -241,6 +245,8 @@ struct TimelineScreen: View {
         } catch {
             guard day == key else { return }
             offlineAt = LocalTimeline.serverCache(day)?.1 ?? .distantPast
+            // 통신 자체가 안 된 것과 서버 응답을 못 읽은 것을 나눠 알림
+            netFail = error is URLError
             self.error = error.localizedDescription
         }
     }

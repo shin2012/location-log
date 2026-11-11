@@ -51,4 +51,11 @@ for f in files {
     for d in diffs.prefix(12) { print("     ", d) }
     if !diffs.isEmpty { bad += 1 }
 }
+// 서버는 기기에 있는 위치 점·기압을 빼고 보냄(have=points,baro) → 키가 없어도 읽혀야 함 (1.9.0 에서 못 읽어 '연결 안 됨'으로 나옴)
+do {
+    let j = #"{"day0":1,"day1":2,"now":3,"acts":[{"ts":1,"act":"walk"}],"park_cal":[],"floor_cal":[]}"#
+    let v = try dec.decode(CalcInput.self, from: Data(j.utf8))
+    print(v.points.isEmpty && v.baro.isEmpty && v.acts.count == 1 ? "ok   빠진 목록 읽기" : "FAIL 빠진 목록 읽기")
+    if !(v.points.isEmpty && v.acts.count == 1) { bad += 1 }
+} catch { print("FAIL 빠진 목록 읽기", error); bad += 1 }
 exit(bad == 0 ? 0 : 1)

@@ -40,6 +40,19 @@ struct CalcInput: Codable {
     var hk: [Hk] = []
 }
 
+/// 빠진 목록은 빈 목록으로 (서버는 기기에 이미 있는 위치 점·기압을 빼고 보냄 — 키가 없어도 읽혀야 함)
+extension CalcInput {
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        func l<T: Decodable>(_ k: CodingKeys) throws -> [T] { try c.decodeIfPresent([T].self, forKey: k) ?? [] }
+        self.init(day0: try c.decode(Double.self, forKey: .day0), day1: try c.decode(Double.self, forKey: .day1),
+                  now: try c.decode(Double.self, forKey: .now))
+        visits = try l(.visits); points = try l(.points); acts = try l(.acts); steps = try l(.steps); car = try l(.car)
+        places = try l(.places); checkins = try l(.checkins); parks = try l(.parks); parkCal = try l(.parkCal)
+        baro = try l(.baro); floorCal = try l(.floorCal); wifi = try l(.wifi); hk = try l(.hk)
+    }
+}
+
 // MARK: 출력 (서버 JSON 과 같은 키)
 
 struct CalcDay: Encodable {
