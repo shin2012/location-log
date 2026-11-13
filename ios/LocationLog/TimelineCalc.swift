@@ -21,6 +21,10 @@ struct CalcInput: Codable {
     struct FloorCal: Codable { var ts: Double; var lat: Double; var lon: Double; var dh: Double; var level: Int; var ap: String? }
     struct Wifi: Codable { var ts: Double; var bssid: String? }
     struct Hk: Codable { var uuid: String; var kind: String; var start: Double; var end: Double; var value: Double; var device: String }
+    struct FloorProfile: Codable {
+        struct Anchor: Codable { var dh: Double; var level: Int }
+        var lat: Double; var lon: Double; var radius: Double; var anchors: [Anchor]
+    }
 
     var day0: Double            // 하루 시작 (한국 0시) epoch ms
     var day1: Double
@@ -38,6 +42,7 @@ struct CalcInput: Codable {
     var floorCal: [FloorCal] = []
     var wifi: [Wifi] = []
     var hk: [Hk] = []
+    var floorProfiles: [FloorProfile] = []
 }
 
 /// 빠진 목록은 빈 목록으로 (서버는 기기에 이미 있는 위치 점·기압을 빼고 보냄 — 키가 없어도 읽혀야 함)
@@ -50,6 +55,7 @@ extension CalcInput {
         visits = try l(.visits); points = try l(.points); acts = try l(.acts); steps = try l(.steps); car = try l(.car)
         places = try l(.places); checkins = try l(.checkins); parks = try l(.parks); parkCal = try l(.parkCal)
         baro = try l(.baro); floorCal = try l(.floorCal); wifi = try l(.wifi); hk = try l(.hk)
+        floorProfiles = try l(.floorProfiles)
     }
 }
 
@@ -111,7 +117,7 @@ enum TimelineCalc {
 
     /// CalcInput → 서버 /timeline 과 같은 JSON 구조
     static func build(_ inp: CalcInput, date: String) -> CalcDay {
-        let a = inp.day0 / 1000, b = inp.day1 / 1000, now = inp.now / 1000
+        let a = inp.day0 / 1000, b = inp.day1 / 1000
         // 서버 app.py day_timeline 의 조회 창과 같게 거름
         let vsRaw = inp.visits.filter { $0.arrive / 1000 < b && ($0.depart == nil || $0.depart! / 1000 > a - 43200) }
             .sorted { $0.arrive < $1.arrive }
@@ -175,8 +181,20 @@ enum TimelineCalc {
             if !hs.isEmpty || !hk.isEmpty {
                 let pk = parks.filter { v.start - parkAfter <= $0.ts && $0.ts <= v.start + 300 && $0.dh != nil }
                 let base = pk.last?.dh ?? 0
-                let segs = Floors.segments(start: s, end: e, lat: v.lat, lon: v.lon, hs: hs, steps: steps, cal: fcal,
+                let profile = inp.floorProfiles.first { ParkModel.dist(v.lat, v.lon, $0.lat, $0.lon) <= $0.radius }
+                let segs: [CalcDay.Floor]
+                if let profile {
+                    let localPark = inp.parks.filter { p in
+                        guard let la = p.lat, let lo = p.lon else { return false }
+                        return v.start - parkAfter <= p.ts / 1000 && p.ts / 1000 <= v.start + 300
+                            && ParkModel.dist(la, lo, profile.lat, profile.lon) <= profile.radius
+                    }.max { $0.ts < $1.ts }
+                    segs = Floors.profileSegments(start: s, end: e, hs: hs, steps: steps,
+                                                  profile: profile, parkAt: localPark.map { $0.ts / 1000 })
+                } else {
+                    segs = Floors.segments(start: s, end: e, lat: v.lat, lon: v.lon, hs: hs, steps: steps, cal: fcal,
                                            wifi: wifi, baseDh: base, hk: hk)
+                }
                 if segs.count > 1 { it.floors = segs } else if let f = segs.first, !f.subs.isEmpty { it.subs = f.subs }
             }
             items.append((it, items.count))
@@ -483,6 +501,55 @@ enum Floors {
         if near.isEmpty { return defaultLevel(dh) }
         let (a, b) = ParkModel.model(lat: lat, lon: lon, cal: near.map { ParkCal(lat: $0.lat, lon: $0.lon, dh: $0.dh, level: $0.level) }, defA: defA)
         return max(ParkModel.levelMin, min(ParkModel.levelMax, Int(((dh - b) / a + 0.5).rounded(.down))))
+    }
+
+    /// 주차 시각을 기준으로 한 장소별 상대 높이. 도로·기존 보정·공유기 기준과 섞지 않는다.
+    static func profileSegments(start vs: Double, end ve: Double, hs: [(Double, Double)], steps: [TimelineCalc.S],
+                                profile: CalcInput.FloorProfile, parkAt: Double?) -> [CalcDay.Floor] {
+        guard let parkAt, parkAt < ve, !profile.anchors.isEmpty else { return [] }
+        let nearby = hs.filter { abs($0.0 - parkAt) <= 60 }
+        guard let closest = nearby.min(by: { abs($0.0 - parkAt) < abs($1.0 - parkAt) }) else { return [] }
+        let refs = nearby.filter { 5 <= $0.0 - parkAt && $0.0 - parkAt <= 35 }.map(\.1).sorted()
+        let ref = refs.isEmpty ? closest.1 : refs[refs.count / 2]
+        var win = hs.filter { parkAt <= $0.0 && $0.0 <= ve }
+        if win.count > 1, let gap = (1..<win.count).first(where: { win[$0].0 - win[$0 - 1].0 > 90 }) {
+            win = Array(win.prefix(gap))
+        }
+        guard let first = win.first, first.0 - parkAt <= 60, let last = win.last else { return [] }
+        let ps = plateaus(win)
+        guard !ps.isEmpty else { return [] }
+        func level(_ dh: Double) -> Int? {
+            guard let a = profile.anchors.min(by: { abs($0.dh - dh) < abs($1.dh - dh) }), abs(a.dh - dh) <= 4.5 else { return nil }
+            return a.level
+        }
+        var t = max(vs, parkAt), dh = 0.0, lv = level(0)
+        var via: String?
+        var out: [CalcDay.Floor] = []
+        func emit(_ end: Double) {
+            guard end > t, let lv else { return }
+            if let l = out.last, l.level == lv {
+                out[out.count - 1].end = end
+            } else {
+                out.append(.init(start: t, end: end, dh: TimelineCalc.pyRound(dh, 2), via: via,
+                                 ap: nil, level: lv, est: true, label: ParkModel.label(lv), subs: []))
+            }
+        }
+        if ps.count > 1 {
+            for k in 1..<ps.count {
+                let a = ps[k - 1], b = ps[k], delta = b.first - a.last
+                if abs(delta) < jumpM || b.start - a.end > maxDur { continue }
+                emit(max(t, a.end))
+                let previous = lv
+                dh = b.first - ref; t = max(vs, b.start); lv = level(dh)
+                let top = profile.anchors.map(\.level).max()!
+                if previous == top, delta <= -10, let next = lv, next < 0,
+                   profile.anchors.contains(where: { $0.level == 0 }) { lv = 0 }
+                let ev = Ev(start: a.end, end: b.start, dh: delta, mps: midSpeed(win, a, b, delta))
+                via = ev.mps >= elevMps || (abs(delta) >= 10 && (lv == top || previous == top)) ? "elevator" : "stairs"
+            }
+        }
+        emit(min(ve, last.0))
+        return out
     }
 
     static func segments(start vs: Double, end ve: Double, lat: Double, lon: Double, hs: [(Double, Double)], steps: [TimelineCalc.S],

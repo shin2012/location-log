@@ -120,6 +120,7 @@ enum LocalTimeline {
         m.parks = parks
         m.parkCal = union(s.parkCal, m.parkCal) { "\($0.lat)|\($0.lon)|\($0.dh)|\($0.level)" }
         m.floorCal = s.floorCal
+        m.floorProfiles = s.floorProfiles
         return applyEdits(m)
     }
 

@@ -424,7 +424,8 @@ def day_timeline(date: str):
         fcal = cur.fetchall()
         cur.execute("SELECT kind, start, end, value, device FROM day_hk WHERE end >= %s AND start < %s ORDER BY start", (a, b))
         hk = cur.fetchall()
-    out = TL.build_items(a, b, vs, pts, acts, steps, cps, places, cks, parks, baro, fcal, wifi, hk)
+    out = TL.build_items(a, b, vs, pts, acts, steps, cps, places, cks, parks, baro, fcal, wifi, hk,
+                         TL.floors.profile_config(os.environ.get("FLOOR_PROFILES_JSON", "[]")))
     for it in out["items"]:
         it["start"], it["end"] = dt_to_ms(it["start"]), dt_to_ms(it["end"])
         if "park" in it:
@@ -484,6 +485,9 @@ def day_inputs(cur, date: str, have: set[str] = frozenset()) -> dict:
     out["park_cal"] = [{"lat": c["lat"], "lon": c["lon"], "dh": c["dh"], "level": c["level"]} for c in _park_cal(cur)]
     cur.execute("SELECT ts, lat, lon, dh, level, ap FROM floor_cal")
     out["floor_cal"] = [{**r, "ts": _ms(r["ts"])} for r in cur.fetchall()]
+    # 장소별 실측 상대 높이. 개인 좌표는 코드가 아니라 서버 환경변수에만 보관.
+    out["floor_profiles"] = TL.floors.profile_config(os.environ.get("FLOOR_PROFILES_JSON", "[]"))
+
     return out
 
 
@@ -698,7 +702,7 @@ def _parks(cur, a: datetime, b: datetime) -> list[dict]:
             lv, est = PK.estimate(r["dh"], r["lat"], r["lon"], cal), True
         else:
             lv, est = r["level_est"], True
-        out.append({"ts": r["ts"], "level": lv, "est": est, "dh": r["dh"]})
+        out.append({"ts": r["ts"], "level": lv, "est": est, "dh": r["dh"], "lat": r["lat"], "lon": r["lon"]})
     return out
 
 

@@ -176,11 +176,91 @@ def level_of(dh: float, lat: float, lon: float, near: list[dict]) -> int:
     return max(parking.LEVEL_MIN, min(parking.LEVEL_MAX, math.floor((dh - b) / a + 0.5)))
 
 
+def profile_config(raw: str) -> list[dict]:
+    """서버 설정을 검증해 앱 디코딩을 깨뜨릴 수 있는 값은 보내지 않는다."""
+    import json
+    try:
+        values = json.loads(raw)
+        if not isinstance(values, list):
+            return []
+        out = []
+        for p in values:
+            lat, lon, radius = float(p["lat"]), float(p["lon"]), float(p["radius"])
+            anchors = [{"dh": float(a["dh"]), "level": int(a["level"])} for a in p["anchors"]]
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180 and 0 < radius <= 500 and anchors):
+                continue
+            if not all(math.isfinite(a["dh"]) and -9 <= a["level"] <= 30 for a in anchors):
+                continue
+            out.append(dict(lat=lat, lon=lon, radius=radius, anchors=anchors))
+        return out
+    except (ValueError, TypeError, KeyError, OverflowError):
+        return []
+
+
+def profile_segments(v, hs, steps, profile, park_at):
+    """주차 이후 높이만 비교. 앵커는 실측 상대 높이이며 건물의 기하학적 층고가 아니다."""
+    if park_at is None or not profile.get("anchors") or park_at >= v["end"]:
+        return []
+    nearby = [x for x in hs if abs((x[0] - park_at).total_seconds()) <= 60]
+    if not nearby:
+        return []
+    ref_samples = [x[1] for x in nearby if 5 <= (x[0] - park_at).total_seconds() <= 35]
+    ref = sorted(ref_samples)[len(ref_samples) // 2] if ref_samples else min(nearby, key=lambda x: abs((x[0] - park_at).total_seconds()))[1]
+    win = [x for x in hs if park_at <= x[0] <= v["end"]]
+    # 수신 중단을 안정된 높이로 간주하지 않는다. 끊긴 뒤 층 번호는 추정하지 않는다.
+    for i in range(1, len(win)):
+        if (win[i][0] - win[i - 1][0]).total_seconds() > 90:
+            win = win[:i]
+            break
+    if not win or (win[0][0] - park_at).total_seconds() > 60:
+        return []
+    ps = plateaus(win)
+    if not ps:
+        return []
+    anchors = profile["anchors"]
+    def level(dh):
+        a = min(anchors, key=lambda x: abs(x["dh"] - dh))
+        return a["level"] if abs(a["dh"] - dh) <= 4.5 else None
+    t, dh, lv, via = max(v["start"], park_at), 0.0, level(0), None
+    out = []
+    def emit(end):
+        if end <= t or lv is None:
+            return
+        sg = dict(start=t, end=end, dh=round(dh, 2), via=via, ap=None,
+                  level=lv, est=True, label=parking.label(lv), subs=[])
+        if out and out[-1]["level"] == lv:
+            out[-1]["end"] = end
+        else:
+            out.append(sg)
+    for a, b in zip(ps, ps[1:]):
+        delta = b["first"] - a["last"]
+        if abs(delta) < JUMP_M or (b["start"] - a["end"]).total_seconds() > MAX_DUR:
+            continue
+        end = max(t, a["end"])
+        emit(end)
+        previous = lv
+        dh, t = b["first"] - ref, max(v["start"], b["start"])
+        lv = level(dh)
+        top = max(x["level"] for x in anchors)
+        # 경사지 건물은 높이가 다른 1층 출입구가 있다. 집에서 내린 엘리베이터는 주차장이 아니라 1층.
+        if previous == top and delta <= -10 and lv is not None and lv < 0 and any(x["level"] == 0 for x in anchors):
+            lv = 0
+        ev = dict(start=a["end"], end=b["start"], dh=delta, mps=_mid_speed(win, a, b, delta))
+        via = "elevator" if ev["mps"] >= ELEV_MPS or (abs(delta) >= 10 and (lv == top or previous == top)) else "stairs"
+    emit(min(v["end"], win[-1][0]))
+    return out
+
+
 def segments(v: dict, hs: list[tuple[datetime, float]], steps: list[dict], cal: list[dict],
-             wifi: list[dict] | None = None, base_dh: float = 0.0, hk: list[dict] | None = None) -> list[dict]:
+             wifi: list[dict] | None = None, base_dh: float = 0.0, hk: list[dict] | None = None,
+             profile: dict | None = None, park_at: datetime | None = None) -> list[dict]:
     """머문 곳 v {start, end, lat, lon} 의 폰으로 확인된 층 구간 (각각 subs = 폰 두고 워치 계단으로 다녀온 층, 시간순).
     워치 기록은 층 이동 추정에만 씀 ('폰 두고 이동' 자체는 표시 안 함 — 사용자 결정).
-    기압 층 이동도 워치 층도 없으면 []. cal: 사용자가 확정한 층 [{ts, lat, lon, dh, level, ap}]"""
+    기압 층 이동도 워치 층도 없으면 []. cal: 사용자가 확정한 층 [{ts, lat, lon, dh, level, ap}]
+    profile: 홈 등 특정 장소용 층 프로필 {lat, lon, radius, anchors: [{dh, level}]} (선택)"""
+    if profile is not None:
+        # 해당 장소에서는 기존 도로 기준 보정·공유기를 섞지 않는다.
+        return profile_segments(v, hs, steps, profile, park_at)
     win = [x for x in hs if v["start"] - BEFORE - timedelta(minutes=2) <= x[0] <= v["end"]]
     evs = [e for e in detect(win) if e["start"] >= v["start"] - BEFORE]
     exc = excursions(v, steps, hk or [], evs)

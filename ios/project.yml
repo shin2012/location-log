@@ -37,7 +37,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: kr.b-612.sillage
         NAVER_MAP_KEY_ID: ""
         GOOGLE_MAPS_KEY: ""
-        MARKETING_VERSION: "1.9.1"
+        MARKETING_VERSION: "1.10.0"
         CURRENT_PROJECT_VERSION: 1
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"

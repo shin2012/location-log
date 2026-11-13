@@ -54,7 +54,7 @@ def run(inp: dict, date: str) -> dict:
             lv, est = PK.estimate(r["dh"], r["lat"], r["lon"], cal), True
         else:
             lv, est = r["level_est"], True
-        parks.append({"ts": t, "level": lv, "est": est, "dh": r["dh"]})
+        parks.append({"ts": t, "level": lv, "est": est, "dh": r["dh"], "lat": r.get("lat"), "lon": r.get("lon")})
     baro = [{"ts": dt(x["ts"]), "kpa": x["kpa"]} for x in sorted(inp.get("baro", []), key=lambda x: x["ts"])
             if a - td(hours=1) <= dt(x["ts"]) < b]
     wifi_all = sorted(({"ts": dt(w["ts"]), "bssid": w.get("bssid")} for w in inp.get("wifi", [])), key=lambda w: w["ts"])
@@ -65,7 +65,7 @@ def run(inp: dict, date: str) -> dict:
     hk = [{**x, "start": dt(x["start"]), "end": dt(x["end"])} for x in sorted(inp.get("hk", []), key=lambda x: x["start"])
           if dt(x["end"]) >= a and dt(x["start"]) < b]
     fcal = [{**c, "ts": dt(c["ts"])} for c in inp.get("floor_cal", [])]
-    out = TL.build_items(a, b, vs, pts, acts, steps, car, inp.get("places", []), cks, parks, baro, fcal, wifi, hk)
+    out = TL.build_items(a, b, vs, pts, acts, steps, car, inp.get("places", []), cks, parks, baro, fcal, wifi, hk, inp.get("floor_profiles", []))
     for it in out["items"]:
         it["start"], it["end"] = ms(it["start"]), ms(it["end"])
         if "park" in it:
