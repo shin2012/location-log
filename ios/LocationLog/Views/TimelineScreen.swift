@@ -327,29 +327,21 @@ struct LevelMenu: View {
     static func around(_ lv: Int) -> [Int] { Array((-6...max(10, lv + 10)).reversed()) }
 }
 
-/// 해당 층에 도착한 방법 → 그 층에 머문 시간. 이동 아이콘은 도착 설명에만 붙인다.
+/// 시각 범위(분) 아래 도착 설명. 이동 아이콘은 설명에만 붙인다.
 struct FloorRow: View {
     let floor: TimelineFloor
     let set: (Int?) async -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let v = floor.viaLabel {
-                Label(v, systemImage: floor.viaSymbol ?? "arrow.right")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 12) {
+                stayDetails.fixedSize(horizontal: true, vertical: true)
+                Spacer(minLength: 0)
+                levelMenu
             }
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .center, spacing: 12) {
-                    stayDetails.fixedSize(horizontal: true, vertical: true)
-                    Spacer(minLength: 0)
-                    levelMenu
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    stayDetails
-                    levelMenu
-                }
+            VStack(alignment: .leading, spacing: 8) {
+                stayDetails
+                levelMenu
             }
         }
         .padding(.leading, 20)
@@ -358,13 +350,14 @@ struct FloorRow: View {
 
     private var stayDetails: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(Fmt.hm(floor.start) + "–" + Fmt.hm(floor.end))
+            Text(Fmt.hm(floor.start) + "–" + Fmt.hm(floor.end) + " (" + floor.durationLabel + ")")
                 .font(.subheadline).monospacedDigit()
-            HStack(spacing: 4) {
-                Text("머묾")
-                Text("· " + (floor.end > floor.start ? Fmt.durKo(floor.end - floor.start) : "시간 미확인"))
+            if let v = floor.viaLabel {
+                Label(v, systemImage: floor.viaSymbol ?? "arrow.right")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .font(.caption).foregroundStyle(.secondary)
         }
         .fixedSize(horizontal: false, vertical: true)
     }

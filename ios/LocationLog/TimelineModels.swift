@@ -83,6 +83,11 @@ struct TimelineFloor: Decodable, Hashable, Identifiable {
     let subs: [TimelineSub]?    // 이 층(폰으로 확인)에 폰을 두고 워치 계단으로 다녀온 층 — 시간순
     var id: Double { start }
 
+    var durationLabel: String {
+        guard end > start else { return "시간 미확인" }
+        return "\(Int(((end - start) / 60_000).rounded()))분"
+    }
+
     var viaSymbol: String? {
         switch via {
         case "elevator": return "arrow.up.arrow.down.square"
