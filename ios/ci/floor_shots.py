@@ -24,6 +24,8 @@ for name in ["iPhone 17 Pro", "iPad Pro 13-inch (M5)"]:
     run("xcrun", "simctl", "boot", udid)
     run("xcrun", "simctl", "bootstatus", udid, "-b")
     run("xcrun", "simctl", "install", udid, str(app))
+    run("xcrun", "simctl", "privacy", udid, "grant", "location-always", bundle)
+    run("xcrun", "simctl", "privacy", udid, "grant", "location", bundle)
     container = Path(run("xcrun", "simctl", "get_app_container", udid, bundle, "data"))
     metric = container / "Documents/floor-layout.json"
     for mode in ["light", "dark"]:
