@@ -1,6 +1,11 @@
 name: 층 기록 화면 검증
 on:
   workflow_dispatch:
+    inputs:
+      interaction_only:
+        description: "통과한 행 캡처를 생략하고 층 선택 동작만 재검증"
+        type: boolean
+        default: false
 jobs:
   floors:
     runs-on: macos-26
@@ -11,17 +16,27 @@ jobs:
         run: |
           for X in /Applications/Xcode_26*.app; do sudo xcode-select -s "$X"; done
       - name: 시뮬레이터 빌드
+        if: ${{ !inputs.interaction_only }}
         run: |
           set -o pipefail
           xcodebuild -project ios/LocationLog.xcodeproj -scheme LocationLog -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/dd" CODE_SIGNING_ALLOWED=NO build > "$RUNNER_TEMP/build.log" 2>&1 || { cat "$RUNNER_TEMP/build.log"; exit 1; }
       - name: 실제 층 행 캡처와 높이 검사
+        if: ${{ !inputs.interaction_only }}
         run: python3 ios/ci/floor_shots.py
       - name: 층 선택 스크롤·손 뗌·선택 회귀 시험
         run: |
           command -v xcodegen || brew install xcodegen
           xcodegen generate --spec ios/ci/interaction.yml
+          mkdir -p floor-shots
+          xcodebuild -project ios/ci/FloorInteraction.xcodeproj -scheme FloorInteraction -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/ui" CODE_SIGNING_ALLOWED=NO build-for-testing > "$RUNNER_TEMP/interaction-build.log" 2>&1 || { cat "$RUNNER_TEMP/interaction-build.log"; exit 1; }
           for DEVICE in 'iPhone 17 Pro' 'iPad Pro 13-inch (M5)'; do
-            xcodebuild -project ios/ci/FloorInteraction.xcodeproj -scheme FloorInteraction -configuration Debug -destination "platform=iOS Simulator,name=$DEVICE" -parallel-testing-enabled NO -resultBundlePath "floor-shots/$DEVICE.xcresult" CODE_SIGNING_ALLOWED=NO test > "$RUNNER_TEMP/interaction.log" 2>&1 || { cat "$RUNNER_TEMP/interaction.log"; exit 1; }
+            xcrun simctl boot "$DEVICE"
+            xcrun simctl bootstatus "$DEVICE" -b
+            xcrun simctl install "$DEVICE" "$RUNNER_TEMP/ui/Build/Products/Debug-iphonesimulator/LocationLog.app"
+            xcrun simctl privacy "$DEVICE" grant location-always kr.b-612.sillage
+            xcrun simctl privacy "$DEVICE" grant location kr.b-612.sillage
+            xcodebuild -project ios/ci/FloorInteraction.xcodeproj -scheme FloorInteraction -configuration Debug -destination "platform=iOS Simulator,name=$DEVICE" -derivedDataPath "$RUNNER_TEMP/ui" -parallel-testing-enabled NO -resultBundlePath "floor-shots/$DEVICE.xcresult" CODE_SIGNING_ALLOWED=NO test-without-building > "$RUNNER_TEMP/interaction.log" 2>&1 || { cat "$RUNNER_TEMP/interaction.log"; exit 1; }
+            xcrun simctl shutdown "$DEVICE"
           done
       - uses: actions/upload-artifact@v4
         if: always()
