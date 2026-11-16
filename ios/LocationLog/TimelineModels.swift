@@ -83,11 +83,22 @@ struct TimelineFloor: Decodable, Hashable, Identifiable {
     let subs: [TimelineSub]?    // 이 층(폰으로 확인)에 폰을 두고 워치 계단으로 다녀온 층 — 시간순
     var id: Double { start }
 
-    var viaLabel: String? {
+    var viaSymbol: String? {
         switch via {
-        case "elevator": return "엘리베이터로 이동"
-        case "stairs": return "계단으로 이동"
-        case "escalator": return "에스컬레이터로 이동"
+        case "elevator": return "arrow.up.arrow.down.square"
+        case "stairs": return "figure.stairs"
+        case "escalator": return "arrow.up.forward"
+        default: return nil
+        }
+    }
+
+    /// 머묾 구간이 아니라 이 층에 도착한 방법이다.
+    var viaLabel: String? {
+        let destination = level < 0 ? "지하 \(-level)층" : "\(level + 1)층"
+        switch via {
+        case "elevator": return "엘리베이터로 \(destination)에 도착"
+        case "stairs": return "계단으로 \(destination)에 도착"
+        case "escalator": return "에스컬레이터로 \(destination)에 도착"
         default: return nil
         }
     }
