@@ -13,10 +13,10 @@ class FloorLayoutTests(unittest.TestCase):
         self.assertNotIn('Image(systemName: floor.via == nil', row)
         self.assertNotIn('Text("머묾")', row)
         self.assertIn(' + " (" + floor.durationLabel + ")"', row)
-        details = row.split('private var stayDetails: some View {', 1)[1]
-        self.assertLess(details.index('Text(Fmt.hm('), details.index('Label(v,'))
-        self.assertLess(row.index('ViewThatFits('), row.index('Label(v,'))
-        self.assertIn('ViewThatFits(in: .horizontal)', row)
+        self.assertLess(row.index('Text(Fmt.hm('), row.index('Label(v,'))
+        self.assertNotIn('ViewThatFits', row)
+        self.assertIn('HStack(alignment: .top', row)
+        self.assertIn('.fixedSize(horizontal: false, vertical: true)', row)
         self.assertIn('LevelMenu(level: floor.level', row)
 
 

@@ -13,6 +13,9 @@ struct LocationLogApp: App {
         let r = Recorder(store: s)
         _store = StateObject(wrappedValue: s)
         _recorder = StateObject(wrappedValue: r)
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "floorLayoutShot") { return }
+        #endif
         // 하루 종일 기록: 위치 알림으로 앱이 백그라운드에서 다시 켜져도 여기서 이어짐
         // 주차 층 알림 버튼은 앱이 꺼져 있어도 백그라운드로 켜져 여기서 받음 → boot 전에 delegate
         Archives.migrateOnce()
@@ -28,6 +31,19 @@ struct LocationLogApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if DEBUG
+            if UserDefaults.standard.bool(forKey: "floorLayoutShot") {
+                FloorLayoutShotScreen()
+            } else {
+                mainContent
+            }
+            #else
+            mainContent
+            #endif
+        }
+    }
+
+    private var mainContent: some View {
             RootView()
                 .environmentObject(store)
                 .environmentObject(recorder)
@@ -42,6 +58,5 @@ struct LocationLogApp: App {
                     DayLogger.shared.setForeground(p == .active)
                     if p == .active { Task { await store.sync() } } else { store.save(force: true) }
                 }
-        }
     }
 }

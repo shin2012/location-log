@@ -1,0 +1,24 @@
+name: 층 기록 화면 검증
+on:
+  workflow_dispatch:
+jobs:
+  floors:
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode 선택
+        run: |
+          for X in /Applications/Xcode_26*.app; do sudo xcode-select -s "$X"; done
+      - name: 시뮬레이터 빌드
+        run: |
+          set -o pipefail
+          xcodebuild -project ios/LocationLog.xcodeproj -scheme LocationLog -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/dd" CODE_SIGNING_ALLOWED=NO build > "$RUNNER_TEMP/build.log" 2>&1 || { cat "$RUNNER_TEMP/build.log"; exit 1; }
+      - name: 실제 층 행 캡처와 높이 검사
+        run: python3 ios/ci/floor_shots.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: floor-layout-shots
+          path: floor-shots/
+          retention-days: 3

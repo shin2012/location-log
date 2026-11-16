@@ -333,32 +333,23 @@ struct FloorRow: View {
     let set: (Int?) async -> Void
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 12) {
-                stayDetails.fixedSize(horizontal: true, vertical: true)
-                Spacer(minLength: 0)
-                levelMenu
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(Fmt.hm(floor.start) + "–" + Fmt.hm(floor.end) + " (" + floor.durationLabel + ")")
+                    .font(.subheadline).monospacedDigit()
+                if let v = floor.viaLabel {
+                    Label(v, systemImage: floor.viaSymbol ?? "arrow.right")
+                        .labelStyle(FloorArrivalLabelStyle())
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
-            VStack(alignment: .leading, spacing: 8) {
-                stayDetails
-                levelMenu
-            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            levelMenu
         }
         .padding(.leading, 20)
         .padding(.vertical, 4)
-    }
-
-    private var stayDetails: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(Fmt.hm(floor.start) + "–" + Fmt.hm(floor.end) + " (" + floor.durationLabel + ")")
-                .font(.subheadline).monospacedDigit()
-            if let v = floor.viaLabel {
-                Label(v, systemImage: floor.viaSymbol ?? "arrow.right")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
         .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -366,6 +357,16 @@ struct FloorRow: View {
         LevelMenu(level: floor.level, label: floor.label, est: floor.est, symbol: "building.2.fill",
                   range: LevelMenu.around(floor.level), set: set)
             .fixedSize()
+    }
+}
+
+/// List의 기본 Label 여백 대신 아이콘과 설명을 붙여 놓는다.
+private struct FloorArrivalLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            configuration.icon
+            configuration.title
+        }
     }
 }
 
