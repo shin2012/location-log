@@ -287,23 +287,11 @@ struct LevelMenu: View {
     var range: [Int] = Array((-6...4).reversed())
     let set: (Int?) async -> Void
     @State private var busy = false
+    @State private var choosing = false
 
     var body: some View {
-        Menu {
-            if est {
-                Button("\(label) 맞아요", systemImage: "checkmark") { run(level) }
-            }
-            Section("실제 층") {
-                ForEach(range, id: \.self) { lv in
-                    Button { run(lv) } label: {
-                        if lv == level && !est { Label(ParkModel.label(lv), systemImage: "checkmark") } else { Text(ParkModel.label(lv)) }
-                    }
-                }
-            }
-            if !est {
-                Button("추정으로 되돌리기", systemImage: "arrow.uturn.backward") { run(nil) }
-            }
-        } label: {
+        // 긴 시스템 메뉴 대신 스크롤과 탭이 분리된 일반 목록을 사용한다.
+        Button { choosing = true } label: {
             HStack(spacing: 3) {
                 if busy { ProgressView().controlSize(.mini) } else { Image(systemName: symbol) }
                 Text(label).fontWeight(.semibold).monospacedDigit()
@@ -315,10 +303,52 @@ struct LevelMenu: View {
             .background(est ? AnyShapeStyle(.quaternary) : AnyShapeStyle(Color.blue), in: Capsule())
         }
         .buttonStyle(.borderless)
-        .accessibilityLabel("\(label)" + (est ? " 추정, 눌러서 고치기" : ""))
+        .accessibilityLabel("\(label)" + (est ? " 추정, 눌러서 고치기" : ", 눌러서 고치기"))
+        .disabled(busy)
+        .sheet(isPresented: $choosing) {
+            NavigationStack {
+                ScrollViewReader { proxy in
+                    List {
+                        if est {
+                            Button("\(label) 맞아요", systemImage: "checkmark") { run(level) }
+                        }
+                        Section("실제 층") {
+                            ForEach(range, id: \.self) { lv in
+                                Button { run(lv) } label: {
+                                    HStack {
+                                        Text(ParkModel.label(lv))
+                                        Spacer()
+                                        if lv == level { Image(systemName: est ? "questionmark" : "checkmark") }
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .id(lv)
+                                .accessibilityIdentifier("level-option-\(lv)")
+                            }
+                        }
+                        if !est {
+                            Button("추정으로 되돌리기", systemImage: "arrow.uturn.backward") { run(nil) }
+                        }
+                    }
+                    .accessibilityIdentifier("level-picker-list")
+                    // 처음 열 때만 현재 층으로 이동한다. 손을 떼거나 부모가 갱신돼도 돌아가지 않는다.
+                    .onAppear { proxy.scrollTo(level, anchor: .center) }
+                }
+                .navigationTitle("층 고치기")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("닫기") { choosing = false }
+                    }
+                }
+            }
+            .presentationDetents([.large])
+        }
     }
 
     private func run(_ lv: Int?) {
+        guard !busy else { return }
+        choosing = false
         busy = true
         Task { await set(lv); busy = false }
     }

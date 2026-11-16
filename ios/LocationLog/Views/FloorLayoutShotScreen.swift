@@ -4,6 +4,7 @@ import SwiftUI
 /// 서버·개인 기록 없이 실제 FloorRow/LevelMenu를 List 안에서 렌더링한다.
 struct FloorLayoutShotScreen: View {
     @State private var heights: [String: CGFloat] = [:]
+    @State private var selectedLevel: String?
     private let floors: [TimelineFloor] = {
         let start = 1_800_000_000_000.0
         return [
@@ -20,7 +21,7 @@ struct FloorLayoutShotScreen: View {
                 Section {
                     Label("머문 곳", systemImage: "mappin.circle.fill").font(.headline)
                     ForEach(floors) { floor in
-                        FloorRow(floor: floor) { _ in }
+                        FloorRow(floor: floor) { lv in selectedLevel = lv.map(ParkModel.label) ?? "추정" }
                             .background(GeometryReader { proxy in
                                 Color.clear.preference(key: FloorHeights.self, value: [String(floor.start): proxy.size.height])
                             })
@@ -29,6 +30,9 @@ struct FloorLayoutShotScreen: View {
             }
             .listStyle(.insetGrouped)
             .navigationTitle("층 기록 화면 확인")
+            .safeAreaInset(edge: .bottom) {
+                if let selectedLevel { Text("선택 결과: " + selectedLevel) }
+            }
             .onPreferenceChange(FloorHeights.self) { values in
                 heights = values
                 guard values.count == floors.count else { return }

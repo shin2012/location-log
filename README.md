@@ -22,7 +22,9 @@
 
 층 버튼은 시각과 같은 줄 오른쪽에 고정하고 설명은 아래에 붙입니다. 글자가 크거나 화면이 좁으면 왼쪽 문구만 줄바꿈합니다. 기존 층 추정 계산과 원본·확정값은 변경하지 않습니다.
 
-시험: `python3 tests/run_floor_ui.py`, `python3 tests/test_floor_layout.py`.
+층 수정(1.11.2)은 긴 시스템 드롭다운 대신 독립된 층 선택 화면을 엽니다. 현재 층 근처에서 시작하며 스크롤 후 손을 떼도 목록이 유지됩니다. 층을 눌러야 저장하고, 닫기는 변경하지 않습니다. 주차·머문 층·워치 층에 공통 적용하며 ‘맞아요’·‘추정으로 되돌리기’도 유지합니다.
+
+시험: `python3 tests/run_floor_ui.py`, `python3 tests/test_floor_layout.py`, `python3 tests/test_level_picker.py`. `floor-ui.yml`은 실제 iPhone/iPad 시뮬레이터에서 행 높이·화면 캡처와 층 목록 스크롤→손 뗌→B6 선택을 검증합니다.
 
 ## 🗄 저장
 
