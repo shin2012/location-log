@@ -7,7 +7,8 @@ import time
 
 
 def run(*args):
-    return subprocess.check_output(args, text=True, timeout=180).strip()
+    print("실행:", " ".join(args), flush=True)
+    return subprocess.check_output(args, text=True, timeout=600 if "bootstatus" in args else 180).strip()
 
 
 out = Path("floor-shots")
@@ -23,7 +24,6 @@ for name in ["iPhone 17 Pro", "iPad Pro 13-inch (M5)"]:
     run("xcrun", "simctl", "boot", udid)
     run("xcrun", "simctl", "bootstatus", udid, "-b")
     run("xcrun", "simctl", "install", udid, str(app))
-    run("xcrun", "simctl", "status_bar", udid, "override", "--time", "2026-11-16T12:00:00+09:00", "--batteryState", "charged", "--batteryLevel", "100")
     container = Path(run("xcrun", "simctl", "get_app_container", udid, bundle, "data"))
     metric = container / "Documents/floor-layout.json"
     for mode in ["light", "dark"]:
