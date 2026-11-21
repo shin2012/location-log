@@ -225,8 +225,11 @@ final class Recorder: NSObject, ObservableObject, CLLocationManagerDelegate {
         onEngineChanged?(true)
         requestPermission()
         manager.allowsBackgroundLocationUpdates = true
-        manager.showsBackgroundLocationIndicator = true
-        if bgSession == nil { bgSession = CLBackgroundActivitySession() }
+        // '항상' 권한이면 설정('상단 위치 사용 표시')을 따름. 세션은 '사용하는 동안' 권한일 때만 (세션이 있으면 iOS가 파란 표시를 강제)
+        manager.showsBackgroundLocationIndicator = DaySettings.shared.prefs.showIndicator
+        if manager.authorizationStatus == .authorizedAlways {
+            bgSession?.invalidate(); bgSession = nil
+        } else if bgSession == nil { bgSession = CLBackgroundActivitySession() }
         startUpdates()
         startMotion()
         applyIdleTimer()

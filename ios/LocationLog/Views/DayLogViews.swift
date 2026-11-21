@@ -211,7 +211,7 @@ struct BatterySettingsView: View {
                 Toggle("충전 중이면 정밀하게", isOn: p.chargePrecise)
                 Toggle("상단 위치 사용 표시", isOn: p.showIndicator)
             } footer: {
-                Text("절약으로 바뀌면 움직일 때 정확도를 낮추고 머무는 동안 GPS 확인을 멈춥니다. 충전 중에는 움직일 때 '정밀', 머무는 동안 3분마다 확인합니다. 폰이 뜨거우면 충전 중 정밀을 멈춥니다.")
+                Text("절약으로 바뀌면 움직일 때 정확도를 낮추고 머무는 동안 GPS 확인을 멈춥니다. 충전 중에는 움직일 때 '정밀', 머무는 동안 3분마다 확인합니다. 폰이 뜨거우면 충전 중 정밀을 멈춥니다. 상단 파란 위치 표시는 위치 권한이 '항상'일 때만 끌 수 있습니다.")
             }
         }
         .navigationTitle("배터리")
