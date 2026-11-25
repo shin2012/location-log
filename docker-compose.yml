@@ -5,7 +5,7 @@ services:
     image: location-api:latest
     container_name: location-api
     restart: unless-stopped
-    env_file: .env
+    env_file: /vault/location-log/secrets.env
     networks: [npm_network]
 
 networks:
