@@ -13,7 +13,7 @@ open location-log/ios/LocationLog.xcodeproj
 2. 타깃 LocationLog → Signing & Capabilities → **Team** 선택 (Apple Developer 계정)
    - 번들 ID `kr.b-612.sillage` 가 이미 쓰이면 바꿔도 됨
 3. iPhone 연결 → 실행
-4. 앱 **설정** 탭 → 앱 토큰 입력 (서버 `~/apps/location-log/.env` 의 `APP_TOKEN`) → **연결 확인**
+4. 앱 **설정** 탭 → 앱 토큰 입력 (서버 `/vault/location-log/secrets.env` 의 `APP_TOKEN`) → **연결 확인**
 5. 위치 권한은 **항상 허용** (설정 탭 버튼으로 이동)
 
 프로젝트 파일이 안 열리면: `brew install xcodegen && cd ios && xcodegen` (project.yml)
